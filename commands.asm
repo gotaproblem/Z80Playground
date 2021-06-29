@@ -1,7 +1,15 @@
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/05/2021                                           *
+; *                                                      *
+; * Z80 library functions                                *
+; *                                                      *
+; * commands.asm                                         *
+; *                                                      *
+; ********************************************************
 ;
-;
-;
-
 str_commands:	DB		" Available Commands are: ", CR, LF
 				DB		"    help - show this list", CR, LF
 				DB		"    reset - Reset Cold/Warm", CR, LF
@@ -441,13 +449,13 @@ cmd_toggle_end:
 cmd_cpm:
 	; copy CP/M (CCP + BDOS) to RAM
 	ld hl, CPM_BIN
-	ld de, $dc00						; alter this if CP/M and/or BIOS changes
+	ld de, $e000 ;$dc00						; alter this if CP/M and/or BIOS changes
 	ld bc, CPM_LENGTH
 	ldir
 
 	; copy CBIOS to RAM
 	ld hl, CBIOS_BIN
-	ld de, $f200						; alter this if CP/M and/or BIOS changes
+	ld de, $f600 ;$f200						; alter this if CP/M and/or BIOS changes
 	ld bc, CBIOS_LENGTH
 	ldir
 
@@ -460,7 +468,7 @@ cmd_cpm:
 	; run CP/M
 	call rom_off						; disable ROM - LED state shows CP/M is loaded in to memory
 
-	jp $f200							; alter this if CP/M and/or BIOS changes
+	jp $f600 ;$f200							; alter this if CP/M and/or BIOS changes
 
 cmd_cpm_end:
 	ret
@@ -469,7 +477,7 @@ page0:
 	db $c3
 bios_base:
 	db $03
-	db $f2								; alter this if CP/M and/or BIOS changes
+	db $f6 ;$f2								; alter this if CP/M and/or BIOS changes
 iobyte:
 	db $00
 disk_user:
@@ -477,5 +485,5 @@ disk_user:
 bdos_base:
 	db $c3
 	db $06
-	db $e4								; alter this if CP/M and/or BIOS changes
+	db $e8 ;$e4								; alter this if CP/M and/or BIOS changes
 ;

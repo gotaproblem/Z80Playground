@@ -1,32 +1,20 @@
-; *************************************
-; *                                   *
-; * Z80 Home Build Development        *
-; * Steve Bradford                    *
-; * 01/05/2021                        *
-; *                                   *
-; *                                   *
-; *                                   *
-; * Hardware                Ports     *
-; * SC16C2550 DUAL UART               *
-; *                UARTA    $80       *
-; *                UARTB    $90       *
-; *                                   *
-; * 512KB RAM                         *
-; * 32KB ROM                          *
-; *                                   *
-; * Control IO                        *
-; *   ROM Enable            $B0       *
-; *   A16                   $B5       *
-; *   A17                   $B6       *
-; *   A18                   $B7       *
-; *                                   *
-; *************************************
-
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/05/2021                                           *
+; *                                                      *
+; * declerations                                         *
+; *                                                      *
+; * vars.asm                                             *
+; *                                                      *
+; ********************************************************
+;
 
 ;
 ; 16C550 Dual UART Registers
 ;
-; General Regiister Set
+; General Register Set
 ; only available when LCR is set to $00 (bit 7 = 0)
 UIER:       EQU     1               	; Interrupt Enable Register friendly name
 UISR:		EQU		2					; Interrupt Status Register friendly name
@@ -119,23 +107,8 @@ V_ARGC      EQU     V_BOOTFLAG + $01    ; 1 byte number of arguments
 V_ARGV      EQU     V_ARGC + $01        ; (16 * 2 bytes) address of each argument
 V_CMD_BUFFER EQU    V_ARGV + $01 + 32   ; 128 bytes
 V_CPM		EQU		V_CMD_BUFFER + $01 + 128
-
-
-; temporary stack storage space
-
-;mon_reg_stack		EQU	V_CPM + $01				; register stack for storing the register contents while in the monitor (BREAKPOINT)
-												; 20 bytes: A F B C D E H L + A' F' B' C' D' E' H' L' + IX IY
-
-					;.ORG	$+1					; PADDING: needed to advance the instruction pointer  to the next byte when using .BLOCK below
-
-;mon_reg_rtn_addr	EQU	mon_reg_stack + 21					; stores the return address (just for displaying purposes)
-;mon_stack_backup	EQU	mon_reg_rtn_addr + 2					; just a backup variable to not mess up the original stack pointer while saving/restoring
-
-
-
 ;
-;
-;              
+;        
 EOS:        EQU     $00					; signify end of string with a NULL (0)
 CR:         EQU     $0d
 LF:         EQU     $0a

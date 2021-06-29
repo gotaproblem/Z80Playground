@@ -1,8 +1,15 @@
-;           
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/05/2021                                           *
+; *                                                      *
+; * Z80 library functions                                *
+; *                                                      *
+; * monitor.asm                                          *
+; *                                                      *
+; ********************************************************
 ;
-;
-
-
 MONITOR:    
 ; display selection menu
             CALL    PRINT_NEWLINE
@@ -26,13 +33,7 @@ MONITOR:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
 ; function READ_LINE
-;
-;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;  STRING ROUTINES  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-; read_line - reads a line of text, returns when enter is pressed. HL then contains the address to the read string
+; reads a line of text, returns when enter is pressed. HL then contains the address to the read string
 ; affects: none
 ; arguments: HL - start address of string buffer
 ; returns: none (HL unaffectd)
@@ -83,7 +84,7 @@ read_line_bsp_1:
 				jr		read_line_loop
 
 				
-read_line_done:	;ld		a, EOS					; load A with the end-of-string character
+read_line_done:	
 				ld		(hl), EOS				; put EOS at the end of the string
 				
 				pop		hl						; restore registers

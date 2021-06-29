@@ -39,7 +39,7 @@ DEL	EQU	7FH		;rubout
 ;
 ;   Set origin for CP/M
 ;
-	ORG	(MEM-9)*1024 ; $dc00 ;(MEM-7)*1024	; $e400
+	ORG	(MEM-8)*1024 ; $e000
 ;
 CBASE:	JP	COMMAND		;execute command processor (ccp).
 	JP	CLEARBUF	;entry to empty input buffer before starting ccp.

@@ -1,12 +1,24 @@
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/05/2021                                           *
+; *                                                      *
+; * Z80 library functions                                *
+; *                                                      *
+; * lib.asm                                              *
+; *                                                      *
+; ********************************************************
 ;
-;
-;
-NewLine:    DB      $0d, $0a, 0         ; CR, LF, NULL
+
+; build options
+NewLine:    DB      $0d, $0a, 0 
 cls:        DB      $1b, '[', '2', 'J', 0
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;     
 ; function GETC
+GETC:
 GET_CHAR:
             IN      A, (UALSR)          ; read Line Status Register           
             BIT     0, A                ; bit set when Rx Holding register 

@@ -1,10 +1,14 @@
-; *************************************
-; *                                   *
-; * Z80 Home Build Development        *
-; * Steve Bradford                    *
-; * 01/05/2021                        *
-; *                                   *
-; *************************************
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/05/2021                                           *
+; *                                                      *
+; * modified to run on Z80 Playground by 8bitStack.co.uk *
+; *                                                      *
+; * main.asm                                             *
+; *                                                      *
+; ********************************************************
 ;
 
 ; build options
@@ -23,10 +27,12 @@ WARM:       JP      MAIN    ; monitor warm boot
 Enabled:    DB      "Enabled ", EOS
 Disabled:   DB      "Disabled", EOS
 RomState:   DB      "32K ROM is ", EOS
-BootMsg:    DB      "Z80 Home Build System", CR, LF
-            DB      "Monitor v1.00 May 2021", CR, LF
-            DB      CR, LF, EOS
-Prompt:     DB      "Z80HB> ", EOS
+SignOn:    
+            ;DB      $1b, '[2J', $1b, '[H'
+            DB      "Monitor v1.0 May 2021, Steve Bradford\r\n"
+            DB      "Z80 Playground [8bitStack.co.uk]\r\n"
+            DB      0
+Prompt:     DB      "MON> ", 0
 
 ;*******************************************************************
 ;*        MAIN PROGRAM                                             *
@@ -38,8 +44,6 @@ Prompt:     DB      "Z80HB> ", EOS
             ;Include "tests.asm"
             Include "monitor.asm"
             Include "commands.asm"
-            ;include "ch376s_driver.asm"
-            ;include "memorystick.asm"
 ;
 ; COLD BOOT
 ;
@@ -76,7 +80,7 @@ CLEAR_RAM:
 ; WARM BOOT
 ;
 MAIN:
-            LD      A,8                 ; select baud rate, 0 = max speed
+            LD      A, 8                ; select baud rate, 0 = max speed
             CALL    INIT_UART           ; have to re-initialise the UART after a rst
             CALL    CLS
             CALL    PRINT_NEWLINE
@@ -96,7 +100,7 @@ ROMisDisabled:
             LD      HL, Disabled
             CALL    PRINT_STR
 CONT:       CALL    PRINT_NEWLINE
-            LD      HL, BootMsg
+            LD      HL, SignOn
             CALL    PRINT_STR           ; display sign on message
             CALL    MONITOR 
 
@@ -111,7 +115,7 @@ CPM_LENGTH  equ $ - CPM_BIN
 
 			org $3000					; just to make it easy to find
 CBIOS_BIN:
-            incbin "cbios.asm.bin"
+            incbin "cbios.bin"
 CBIOS_LENGTH equ $ - CBIOS_BIN
 ;
 ;

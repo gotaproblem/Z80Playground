@@ -1,14 +1,18 @@
-;	ref.
-;	skeletal CBIOS for first level of CP/M 2.0 alteration
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/05/2021                                           *
+; *                                                      *
+; * CBIOS                                                *
+; * ref.                                                 *
+; * skeletal CBIOS for CP/M 2.0 alteration               *
+; *                                                      *
+; * cbios.asm                                            *
+; *                                                      *
+; ********************************************************
 ;
 ; *************************************
-; * CBIOS                             *
-; * Z80 Playground                    *
-; * Steve Bradford                    *
-; * 16/06/2021                        *
-; *                                   *
-; *                                   *
-; *                                   *
 ; * Hardware                Ports     *
 ; * SC16C550 UART           $08       *
 ; * USB CH376S Disk Module  $10       *
@@ -25,71 +29,17 @@
 ; *                                   *
 ; *************************************
 
+; build options
 DEBUG: DEFL 0
 
-;
-; 16C550 Dual UART Registers
-;
-; General Register Set
-; only available when LCR is set to $00 (bit 7 = 0)
-UIER:       EQU     1               	; Interrupt Enable Register friendly name
-UFCR:       EQU     2               	; FIFO Control Register friendly name
-ULCR:       EQU     3               	; Line Control Register friendly name
-UMCR:       EQU     4               	; Modem Control Register friendly name
-ULSR:       EQU     5               	; Line Status Register friendly name
-UMSR        EQU     6               	; Modem Status Register friendly name
-USPR:       EQU     7               	; Scratchpad Register friendly name
-
-
-; Baud Rate Register Set
-; only available when LCR is set to $80 (bit 7 = 1)
-UDLL:       EQU     0                   ; LSB of Divisor Latch (rw)
-UDLM:       EQU     1                   ; MSB of Divisor Latch (rw)
-
-; Enhanced Register Set
-; only accessible when LCR is set to $bf
-UFR2:       EQU     2                   ; Enhanced Feature register (rw)
-UFR4:       EQU     4                   ; XON1 word (rw)
-UFR5:       EQU     5                   ; XON2 word (rw)
-UFR6:       EQU     6                   ; XOFF1 word (rw)
-UFR7:       EQU     7                   ; XOFF2 word (rw)
-
-
-NP81:       EQU     $03                 ; UART No Parity, 8 data bits, 1 stop bit
-
-
-; UARTs IO Port Address
-UARTA:      EQU     $08                ; mapped to IO Port 
-
-
-; UART Register Address offsets
-UAIER:      EQU     UARTA + UIER
-UALCR:      EQU     UARTA + ULCR
-UALSR:      EQU     UARTA + ULSR
-UAMCR:		EQU		UARTA + UMCR
-UAMSR:		EQU		UARTA + UMSR
-UAFCR:		EQU		UARTA + UFCR
-UASPR:      EQU     UARTA + USPR
-UADLL:      EQU     UARTA + UDLL
-UADLM:      EQU     UARTA + UDLM
-UATX:       EQU     UARTA + 0
-UARX:       EQU     UARTA + 0
-;
-ENABLE      EQU     $01
-DISABLE     EQU     $00
-ROM_DISABLE EQU     1
-ROM_ENABLE  EQU     0
-MEM_CNTL    EQU     UAMCR 
-ROM_CNTL    EQU     MEM_CNTL; enable or disable ROM
-ULED1       EQU		UAMCR  	; playground bit 2
-;
+		include "vars.asm"
 ;
 ;
 ; Custom BIOS (CBIOS)
 ;
-ccp:	equ	$dc00 			; base of ccp ($dc00 = 56k system)
-bdos:	equ	$e406 			; bdos entry
-bios:	equ	$f200 			; base of bios
+ccp:	equ	$e000 ;$dc00 			; base of ccp ($dc00 = 56k system)
+bdos:	equ	$e806 ;$e406 			; bdos entry
+bios:	equ	$f600 ;$f200 			; base of bios
 cdisk:	equ	0004h			; current disk number 0=a,... l5=p
 iobyte:	equ	0003h			; i/o byte
 disks:	equ	04h				; number of disks in the system
@@ -155,7 +105,7 @@ trans:
 	defm	18, 24,  4, 10	;sectors 21, 22, 23, 24
 	defm	16, 22			;sectors 25, 26
 ;
-dpblk1:	;disk parameter block for disks A & B 250KB - skew 6, 75 + 2 tracks = IBM PC SSSD 8".
+dpblk1:	;disk parameter block for disks A & B 250KB - skew 6, 75 + 2 tracks = IBM SSSD 8" 3740.
 	defw	26		;sectors per track
 	defm	3		;block shift factor
 	defm	7		;block mask
@@ -189,38 +139,8 @@ boot:
 	; initialise CH376S module and mount disk A
 	ld hl, str_cpm_msg1
 	call PRINT_STR
- 
-    call check_module_exists
-	ld hl, str_cpm_msg3
-    call PRINT_STR
-    
-    call get_module_version
 
-	call configure_memorystick
-	ld hl, str_cpm_msg2
-    call PRINT_STR
-
-	;ld hl, cpm_fileroot     ; open root directory /CPM
-    ;call open_file
-	;cp ERR_OPEN_DIR			; this is actually good
-	;jr nz, dir_open_failed
-
-	;ld hl, cpm_driveA
-	;call open_file
-	;cp USB_INT_SUCCESS		; file opened okay
-	;jr z, boot_real
-
-disk_image_open_failed:
-	;ld hl, str_disk_image_open_fail
-	;call PRINT_STR
-
-	;halt
-
-dir_open_failed:
-	;ld hl, str_dir_fail
-	;call PRINT_STR
-	
-	;halt					; TODO - better to return to monitor
+	call ch376s_init
 
 boot_real:
 	ld hl, signon
@@ -240,7 +160,7 @@ boot_real:
 wboot:
 	ld	sp, $80				; use space below buffer for stack
 	ld a, (cdisk)
-	ld c, a
+	ld c, a					; select previous disk
 	;ld 	c, 0				; select disk 0
 	call seldsk
 	call home	    		; go to track 00, sector 1
@@ -359,10 +279,11 @@ seldsk:	;select drive given by register c
 	; optimise by only doing the following if a change of disk
 	;ld a, (cdisk)
 	;cp c
-	;jp z, seldsk_optimise
+	;jp z, seldsk_noclose	; same disk so don't close
 	
 	;call close_file
 
+;seldsk_noclose:
 	ld (cdisk), a			; selected disk is valid
 
 	ld hl, cpm_driveX
@@ -399,16 +320,15 @@ seldsk:	;select drive given by register c
 	ld (cspt), bc			; save curent disk drives spt value
 
 
+	ld hl, cpm_driveX
+	call open_file
 
-
-	;ld hl, cpm_fileroot     ; open root directory /CPM
-    ;call open_file
-
+	;call PRINT_NEWLINE
 	;ld hl, cpm_driveX
-	;call open_file
-
-
-	
+	;call PRINT_STR
+	;call PRINT_NEWLINE
+	;ld bc, 200				; 2ms delay
+	;call hw_pause
 
 seldsk_optimise:
 	ld hl, (cdph)					
@@ -451,13 +371,9 @@ setdma:	;setdma address given by registers b and c
 ;
 ;
 read:
-	;ld hl, cpm_fileroot     ; open root directory /CPM
-    ;call open_file
-
-	ld hl, cpm_driveX
-	call open_file
-	cp USB_INT_SUCCESS		; file opened okay
-	jr z, read_cont
+	;ld hl, cpm_driveX
+	;call open_file
+	;jr z, read_cont
 
 if DEBUG
 	call PRINT_HEX			; print error code
@@ -468,7 +384,7 @@ if DEBUG
 	call PRINT_STR
 	call PRINT_NEWLINE
 endif
-	jr read_fail
+	;jr read_fail
 
 read_cont:
 if DEBUG
@@ -490,17 +406,17 @@ if DEBUG
 endif
 	call drive_seek			; calculate disk image file offset
 	
-	ld hl, (dmaad)
+	;ld hl, (dmaad)
 	call read_from_file		; read 128 bytes
 	cp 0
 	jr nz, read_fail
 
-	call close_file
+	;call close_file
 	ld a, 0
 	ret
 
 read_fail:
-	call close_file
+	;call close_file
 if DEBUG
     ld hl, str_read_fail
 	call PRINT_STR
@@ -555,20 +471,17 @@ disk_seek_fail:
 
 str_seek_fail:
 	db "Seek failed \r\n", 0
-str_seek:
-	db "Seeking\r\n", 0
+;str_seek:
+;	db "Seeking\r\n", 0
 
 
 ; Write one CP/M record to disk.
 ; Return a 00h in register a if the operation completes properly, and 0lh if an error occurs during the write.
 ;
 write:
-	;ld hl, cpm_fileroot     ; open root directory /CPM
-    ;call open_file
-	ld hl, cpm_driveX
-	call open_file
-	cp USB_INT_SUCCESS
-	jr z, write_cont
+	;ld hl, cpm_driveX
+	;call open_file
+	;jr z, write_cont
 	
 if DEBUG
 	call PRINT_HEX			; print error code
@@ -579,17 +492,17 @@ if DEBUG
 	call PRINT_STR
 	call PRINT_NEWLINE
 endif
-	jr write_fail
+	;jr write_fail
 
 write_cont:
 	call drive_seek			; calculate disk image file offset
 
-	ld hl, (dmaad)
+	;ld hl, (dmaad)
 	call write_to_file		; write 128 bytes
 	cp 0
 	jr nz, write_fail
 
-	call close_file
+	;call close_file
 	ld a, 0
 	ret
 
@@ -598,7 +511,7 @@ if DEBUG
     ld hl, str_write_fail
 	call PRINT_STR
 endif
-	call close_file
+	;call close_file
 	ld a, 1
     ret
 ;
@@ -618,8 +531,8 @@ str_write_fail:
 
 str_dir_fail: 
 	db "Failed to open directory /CPM\r\n", 0
-str_disk_image_open_fail:
-	db "Failed to open A.DSK\r\n", 0
+;str_disk_image_open_fail:
+;	db "Failed to open A.DSK\r\n", 0
 ;
 ;
 ; multiplication function
@@ -651,8 +564,8 @@ Mul_Loop_1:
     ret
 
 str_cpm_msg1: 	db 'Configure CH376 module...',13,10,0
-str_cpm_msg2: 	db 'Check CH376 module exists...',13,10,0
-str_cpm_msg3: 	db 'Get CH376 module version...',13,10,0
+;str_cpm_msg2: 	db 'Check CH376 module exists...',13,10,0
+;str_cpm_msg3: 	db 'Get CH376 module version...',13,10,0
 str_dir_fail3: 	db "Failed to open disk image ",0
 ;str_cmd_cpm_mounted2:
 ;			 db " mounted\r\n", 0
@@ -666,7 +579,7 @@ signon:
     			db '64K CP/M v2.2 [CBIOS v1.0 for Z80 Playground]', 13, 10
 				db "CP/M Copyright Caldera Inc., 1996", 13, 10
 				db "CBIOS Steve Bradford, 2021", 13, 10
-    			db 13, 10
+    			;db 13, 10
     			db 0
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
@@ -787,7 +700,7 @@ PRINT_STR_END:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-
+if DEBUG
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
 ; function PRINT_REGS
@@ -834,10 +747,10 @@ str_regs:
 	db "\r\nA    BC   DE   HL\r\n", 0
 ; function end
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+endif
 
 
-
-	include "memorystick.asm"
+	include "ch376s_driver.asm"
 ;
 ;
 ;	the remainder of the cbios is reserved uninitialized
