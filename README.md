@@ -28,3 +28,9 @@ The A: and B: drives have a capacity of 244KB and use a skew of 6, whilst the C:
 **Disk Image Formatter**
   * **8PFORMAT.COM**. Format any of the four disk images
   
+# Build
+Assemble cpm22.asm and cbios.asm
+
+Assemble main.asm
+
+Flash EEPROM with main.bin
