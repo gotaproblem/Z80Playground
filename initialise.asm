@@ -91,11 +91,13 @@ INITRET:
             LD      A,NP81              ; deselect Divisor Latch and set ...
             OUT     (UALCR),A           ; 8 bit data, 1 stop bit, no parity
             
-            ld      a, $01		        ; enable FIFO with trigger level of 1
-	        out     (UAFCR), a			
+            ; June 2021
+            ; TeraTerm XModem transfers will not work with Auto Flow Control enabled
+            ;ld      a, $01		        ; enable FIFO with trigger level of 1
+	        ;out     (UAFCR), a			
 
-            LD      A,FLOW              ; enable auto flow control, bit 5 = 1, bit 1 = 1
-            OUT     (UAMCR),A
+            ;LD      A,FLOW              ; enable auto flow control, bit 5 = 1, bit 1 = 1
+            ;OUT     (UAMCR),A
             RET
 ; function end
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
