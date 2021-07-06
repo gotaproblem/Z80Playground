@@ -66,7 +66,7 @@ UARX:       EQU     UARTA + 0
 ; example: (7.3728 MHz / 16) / 9600 = 48
 ;
 BAUD_MAX    EQU     1
-BAUD_1200   EQU     384
+;BAUD_1200   EQU     384
 BAUD_2400   EQU     192
 BAUD_4800   EQU     96
 BAUD_9600   EQU     48
