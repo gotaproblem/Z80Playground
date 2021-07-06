@@ -97,13 +97,13 @@ dpbase:
 ;
 ;	sector translate vector
 trans:	
-	defm	 1,  7, 13, 19	;sectors  1,  2,  3,  4
-	defm	25,  5, 11, 17	;sectors  5,  6,  7,  6
-	defm	23,  3,  9, 15	;sectors  9, 10, 11, 12
-	defm	21,  2,  8, 14	;sectors 13, 14, 15, 16
-	defm	20, 26,  6, 12	;sectors 17, 18, 19, 20
-	defm	18, 24,  4, 10	;sectors 21, 22, 23, 24
-	defm	16, 22			;sectors 25, 26
+	defm	 0,  6, 12, 18	;sectors  1,  2,  3,  4
+	defm	24,  4, 10, 16	;sectors  5,  6,  7,  8
+	defm	22,  2,  8, 14	;sectors  9, 10, 11, 12
+	defm	20,  1,  7, 13	;sectors 13, 14, 15, 16
+	defm	19, 25,  5, 11	;sectors 17, 18, 19, 20
+	defm	17, 23,  3,  9	;sectors 21, 22, 23, 24
+	defm	15, 21			;sectors 25, 26
 ;
 dpblk1:	;disk parameter block for disks A & B 250KB - skew 6, 75 + 2 tracks = IBM SSSD 8" 3740.
 	defw	26		;sectors per track
@@ -335,12 +335,17 @@ seldsk_optimise:
 	ret						; return hl = address of dph
 ;
 ;
-settrk:	;set track given by register c - TODO should this be bc?
+settrk:	;set track given by registers bc
 	ld (track), bc
 	ret
 ;
 ;
-setsec:	;set sector given by register c
+setsec:	;set sector given by registers bc
+	;ld hl, prev_sector
+	;ld bc, (sector)
+	;ld (hl), c
+	;inc hl
+	;ld (hl), b
 	ld (sector), bc
 	ret
 ;
@@ -371,150 +376,85 @@ setdma:	;setdma address given by registers b and c
 ;
 ;
 read:
-	;ld hl, cpm_driveX
-	;call open_file
-	;jr z, read_cont
-
-if DEBUG
-	call PRINT_HEX			; print error code
-	call PRINT_NEWLINE
-	ld hl, str_dir_fail3
-	call PRINT_STR
-	ld hl, cpm_driveX		; print current disk image filename
-	call PRINT_STR
-	call PRINT_NEWLINE
-endif
-	;jr read_fail
-
-read_cont:
-if DEBUG
-	ld hl, str_read_t
-	call PRINT_STR
-	ld de, (track)
-	ld a, d
-	call PRINT_HEX
-	ld a, e
-	call PRINT_HEX
-	ld hl, str_read_s
-	call PRINT_STR
-	ld de, (sector)
-	ld a, d
-	call PRINT_HEX
-	ld a, e
-	call PRINT_HEX
-	call PRINT_NEWLINE
-endif
 	call drive_seek			; calculate disk image file offset
-	
-	;ld hl, (dmaad)
 	call read_from_file		; read 128 bytes
 	cp 0
 	jr nz, read_fail
 
-	;call close_file
 	ld a, 0
 	ret
 
 read_fail:
-	;call close_file
-if DEBUG
-    ld hl, str_read_fail
-	call PRINT_STR
-endif
 	ld a, 1
     ret
 
-str_read_fail:
-	db "Read failed\r\n", 0 ;, track ", 0
-str_read_t:
-	db "Read - track ", 0
-str_read_s:
-	db ", sector ", 0
-
 drive_seek:
-	ld bc, (cspt)			; cspt set by setsec
-	
+	;ld bc, (cspt)			; cspt set by setsec
+	ld a, (cspt)
 	; calculate number of cpm records (128 byte records)
 	; cpmrec = (spt * track) + sector
-
-	; need to subtract 1 from sector number for the following to work
-	; i.e. sector number needs to start from 0
-
 	ld de, (track)
-	call DE_Times_BC		; track * spt (de * bc) returns answer in dehl
+	;call DE_Times_BC		; track * spt (de * bc) returns answer in dehl
+	call DE_Times_A
+	;ld a, (prev_sector)
+	;ld b, a
+	;ld a, (sector)
+	;sub b
+	;jp z, seek_fast			; same sector
+
+	;cp 1
+	;jp z, seek_fast			; next sector
 	
+
+;seek_slow:
 	ld bc, (sector)
-	dec bc					; sector - 1
-	add hl, bc				; add sector to hl
+	add hl, bc				; add sector to hl - might need to be a 32bit add
 	
 	; hl is number of cpm records (128 bytes each)
 	; seek offset needs to be in bytes, multiply by 128
 
-	; dehl = (spt * track) + (sector - 1)
+	; dehl = (spt * track) + sector
 	; now need to multiply by 128 to get byte offset
 	ex de, hl
 	ld bc, 128				; de * 128
 	call DE_Times_BC		; result in dehl
+	;jp _seek
 
+;seek_fast:
+	;ld bc, 128
+	;adc hl, bc
+	;jp nc, _seek
+
+	;ld bc, de
+	;ld a, e
+	;add 1
+_seek:
 	call move_to_file_pointer ; altered to use dehl
 	cp USB_INT_SUCCESS
-	jr nz, disk_seek_fail
+	ret z
 
-	ret
-; end drive_seek
-
-disk_seek_fail:
 	ld hl, str_seek_fail
 	call PRINT_STR
-
 	ret
-
+; end drive_seek
 str_seek_fail:
 	db "Seek failed \r\n", 0
-;str_seek:
-;	db "Seeking\r\n", 0
 
 
 ; Write one CP/M record to disk.
 ; Return a 00h in register a if the operation completes properly, and 0lh if an error occurs during the write.
 ;
 write:
-	;ld hl, cpm_driveX
-	;call open_file
-	;jr z, write_cont
-	
-if DEBUG
-	call PRINT_HEX			; print error code
-	call PRINT_NEWLINE
-	ld hl, str_dir_fail3
-	call PRINT_STR
-	ld hl, cpm_driveX		; get saved disk image filename
-	call PRINT_STR
-	call PRINT_NEWLINE
-endif
-	;jr write_fail
-
-write_cont:
 	call drive_seek			; calculate disk image file offset
-
-	;ld hl, (dmaad)
 	call write_to_file		; write 128 bytes
 	cp 0
 	jr nz, write_fail
 
-	;call close_file
 	ld a, 0
 	ret
-
 write_fail:
-if DEBUG
-    ld hl, str_write_fail
-	call PRINT_STR
-endif
-	;call close_file
 	ld a, 1
     ret
-;
 ;
 ;
 msh:
@@ -531,8 +471,6 @@ str_write_fail:
 
 str_dir_fail: 
 	db "Failed to open directory /CPM\r\n", 0
-;str_disk_image_open_fail:
-;	db "Failed to open A.DSK\r\n", 0
 ;
 ;
 ; multiplication function
@@ -562,6 +500,68 @@ Mul_Loop_1:
     jr nz, Mul_Loop_1
 
     ret
+
+
+DE_Times_A:
+;===============================================================
+;Inputs:
+;     DE and A are factors
+;Outputs:
+;     A is unchanged
+;     BC is unchanged
+;     DE is unchanged
+;     HL is the product
+;speed: min 199 cycles
+;       max 261 cycles
+;        212+6b cycles +15 if odd, -11 if non-negative
+;=====================================Cycles====================
+;1
+     ld hl,0            ;210000           10      10
+     rlca                   ;07             4
+     jr nc,$+5
+	 ld h,d
+	 ld e,l  ;3002626B   12+14p
+;2
+     add hl,hl              ;29            --
+     rlca                   ;07             4
+     jr nc,$+3
+	 add hl,de  ;300119     12+6b
+;3
+     add hl,hl              ;29            11
+     rlca                   ;07             4
+     jr nc,$+3
+	 add hl,de  ;300119     12+6b
+;4
+     add hl,hl              ;29            11
+     rlca                   ;07             4
+     jr nc,$+3
+	 add hl,de  ;300119     12+6b
+;5
+     add hl,hl              ;29            11
+     rlca                   ;07             4
+     jr nc,$+3
+	 add hl,de  ;300119     12+6b
+;6
+     add hl,hl              ;29            11
+     rlca                   ;07             4
+     jr nc,$+3
+	 add hl,de  ;300119     12+6b
+;7
+     add hl,hl              ;29            11
+     rlca                   ;07             4
+     jr nc,$+3
+	 add hl,de  ;300119     12+6b
+;8
+     add hl,hl              ;29            11
+     rlca                   ;07             4
+     ret nc                 ;D0         11-6b
+     add hl,de              ;300119     12+6b
+     ret
+
+
+
+
+
 
 str_cpm_msg1: 	db 'Configure CH376 module...',13,10,0
 ;str_cpm_msg2: 	db 'Check CH376 module exists...',13,10,0
@@ -758,6 +758,8 @@ endif
 ;	system	memory image (the space must be available,
 ;	however, between"begdat" and"enddat").
 ;
+prev_sector:
+		defs	2
 track:	defs	2			; two bytes for expansion
 sector:	defs	2			; two bytes for expansion
 dmaad:	defs	2			; direct memory address
