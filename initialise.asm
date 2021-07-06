@@ -25,8 +25,8 @@ INIT_UART:  PUSH     AF
             OUT     (UALCR),A           ; select Divisor Latch Register
 UART_OK:    POP     AF
 
-            CP      1
-            JP      Z,UART1200
+;            CP      1
+;            JP      Z,UART1200
             CP      2
             JP      Z,UART2400
             CP      3
@@ -49,9 +49,9 @@ UART_OK:    POP     AF
 
 ;
 ; configure UART registers for selected baud rate
-UART1200:   
-            LD      A,BAUD_1200                ; 
-            JP      INITRET             ;
+;UART1200:   
+;            LD      A,BAUD_1200                ; 
+;            JP      INITRET             ;
 
 UART2400:   
             LD      A,BAUD_2400 
