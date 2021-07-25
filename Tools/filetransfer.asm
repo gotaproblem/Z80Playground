@@ -913,9 +913,12 @@ wait_til_not_busy2:
     ld a, b
     or c
     jr nz, wait_til_not_busy1
-    call message
-    db '[USB TIMEOUT]', 13, 10, 0
+    ld hl, str_USB_TIMEOUT
+    call PRINT_STR
+    
     ret
+str_USB_TIMEOUT:
+    db '[USB TIMEOUT]\r\n', $
 
 read_status_byte:
     ld a, GET_STATUS
