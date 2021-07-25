@@ -10,6 +10,8 @@ CP/M tools will be published once I have developed them.
   * **Four Disk Images**
   * **XModem Send and Receive**
   * **Disk Image formatter**
+**July 2021**
+  * **FAT file transfer tool**
   
 **CBIOS**  
 CP/M is configured to have four drives.  
@@ -28,7 +30,7 @@ The A: and B: drives have a capacity of 244KB and use a skew of 6, whilst the C:
 **Disk Image Formatter**
   * **8PFORMAT.COM**. Format any of the four disk images
   
-# Build
+# Build ROM
 Assemble cpm22.asm and cbios.asm
 
 Assemble main.asm
