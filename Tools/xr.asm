@@ -77,166 +77,170 @@ C_:			EQU 'C'; Indicate use of CRC method
 ;
 			ORG 0100h
 
-	ld	(oldSP),SP
-	ld	SP,stackend
+	ld	SP,stack
 
 	in a, (UAMCR)
 	and %11111110
 	out (UAMCR), a			; turn ULED1 off
 
-	ld	HL,str_signon		; Print a greeting
-	call	PrintString0
+	ld HL, str_signon		; Print a greeting
+	call PrintString0
 
-	ld	A,(DFCB+1)			; Check if we got a filename
-	cp	' '
-	jp	Z,NoFileName
+	ld A, (DFCB+1)			; Check if we got a filename
+	cp ' '
+	jp Z, NoFileName
 
-	ld  	DE,DFCB			; Then create new file
-	ld 	A,0					; Start at block 0
-	ld	(DFCBcr),A
-	ld 	C,FCREATE
-	call	BDOS			; Returns A in 255 if error opening
-	inc 	A
-	jp	Z,FailCreateFile
+	call DeleteFile			; delete file if already exists
 
-	ld 	A,1					; The first packet is number 1
-	ld 	(pktNo),A
-	ld 	A,255-1				; Also store the 1-complement of it
-	ld 	(pktNo1c),A
+	ld DE, DFCB				; Then create new file
+	ld A, 0					; Start at block 0
+	ld (DFCBcr), A
+	ld C, FCREATE
+	call BDOS				; Returns A in 255 if error opening
+	inc A
+	jp Z, FailCreateFile
+
+	ld A, 1					; The first packet is number 1
+	ld (pktNo), A
+	ld A, 255-1				; Also store the 1-complement of it
+	ld (pktNo1c), A
 
 GetNewPacket:		
-	ld	A,20				; We retry 20 times before giving up
-	ld 	(retrycnt),A
+	ld A, 20				; We retry 20 times before giving up
+	ld (retrycnt), A
 
 NPloop:
-	ld 	A, 3				; 3 Seconds of timeout before each new block
-	call	GetCharTmo
-	jp 	NC,NotPacketTimeout
+	ld A, 3					; 3 Seconds of timeout before each new block
+	call GetCharTmo
+	jp NC, NotPacketTimeout
 
-	ld	HL,retrycnt			; Reached max number of retries?
-	dec 	(HL)
-	jp 	Z,Failure			; Yes, print message and exit
+	ld HL, retrycnt			; Reached max number of retries?
+	dec (HL)
+	jp Z, Failure			; Yes, print message and exit
 
-	ld 	C, NAK				; Send a NAK to the uploader
-	call	CONOUT
-	jp 	NPloop
+	ld C, NAK				; Send a NAK to the uploader
+	call CONOUT
+	jp NPloop
 
 NotPacketTimeout:
 	cp	EOT					; Did uploader say we're finished?
-	jp	Z,Done				; Yes, then we're done
+	jp	Z, Done				; Yes, then we're done
+
 	cp 	CAN					; Uploader wants to abort transfer?
 	jp 	Z, Cancelled		; Yes, then we're also done
+
 	cp ETB					; End of Transmission Block
 	jp Z, Done
+
 	cp	SOH					; Did we get a start-of-new-packet?
 	jp	NZ, NPloop			; No, go back and try again
 
-	ld	HL,packet			; Save the received char into the...
+	ld	HL, packet			; Save the received char into the...
 	ld	(HL),A				; ...packet buffer and...
 	inc 	HL				; ...point to the next location
-	ld 	B,131				; Get 131 more characters for a full packet
+	ld 	B, 131				; Get 131 more characters for a full packet
 GetRestOfPacket:
 	push 	BC
-	ld 	A,1					; timeout value in seconds between characters
-	call	GetCharTmo
+	ld 	A, 1				; timeout value in seconds between characters
+	call GetCharTmo
 	jp c, transmission_error
 	pop 	BC
-	ld	(HL),A				; ...packet buffer and...
+	ld	(HL), A				; ...packet buffer and...
 	inc 	HL				; ...point to the next location
-	djnz	GetRestOfPacket
+	djnz GetRestOfPacket
 	
-	ld	HL,packet+3			; Calculate checksum from 128 bytes of data
-	ld	B,128
-	ld	A,0
+	ld	HL, packet+3		; Calculate checksum from 128 bytes of data
+	ld	B, 128
+	ld	A, 0
 csloop:	
-	add	A,(HL)				; Just add up the bytes
+	add	A, (HL)				; Just add up the bytes
 	inc	HL
-	djnz	csloop
+	djnz csloop
 
 	xor	(HL)				; HL points to the received checksum so
-	jp	NZ,Failure			; by xoring it to our sum we check for equality
+	jp	NZ, Failure			; by xoring it to our sum we check for equality
 
-	ld	A,(pktNo)			; Check if agreement of packet numbers
-	ld	C,A
-	ld	A,(packet+1)
+	ld	A, (pktNo)			; Check if agreement of packet numbers
+	ld	C, A
+	ld	A, (packet+1)
 	cp	C
-	jp	NZ,Failure
+	jp	NZ, Failure
 
-	ld	A,(pktNo1c)			; Check if agreement of 1-compl packet numbers
-	ld	C,A
-	ld	A,(packet+2)
+	ld	A, (pktNo1c)		; Check if agreement of 1-compl packet numbers
+	ld	C, A
+	ld	A, (packet+2)
 	cp	C
-	jp	NZ,Failure
+	jp	NZ, Failure
 
-	ld	DE,packet+3			; Reset DMA address to the packet data buff
-	ld 	C,PUTDMA
-	call	BDOS
-	ld  	DE,DFCB			; File Description Block
-	ld 	C,WRTSEQ
-	call	BDOS			; Returns A=0 if ok
+	ld	DE, packet+3		; Reset DMA address to the packet data buff
+	ld 	C, PUTDMA
+	call BDOS
+	ld  DE, DFCB			; File Description Block
+	ld 	C, WRTSEQ
+	call BDOS				; Returns A=0 if ok
 	cp	0
-	jp	NZ,FailWrite
+	jp	NZ, FailWrite
 
-	ld	HL,pktNo			; Update the packet counters
-	inc 	(HL)
-	ld	HL,pktNo1c
+	ld	HL, pktNo			; Update the packet counters
+	inc (HL)
+	ld	HL, pktNo1c
 	dec	(HL)
 
-	ld 	C,ACK				; Tell uploader that we're happy with the
-	call	CONOUT			; packet and go back and fetch some more
+	ld 	C, ACK				; Tell uploader that we're happy with the
+	call CONOUT				; packet and go back and fetch some more
 	jp	GetNewPacket
 
 transmission_error:
-	pop 	BC				; sync stack
+	pop BC					; sync stack
 	ld c, NAK
 	call CONOUT
 	jp GetNewPacket
 
 DeleteFile:
-	ld  	DE,DFCB			; Delete file first
-	ld 	C,DELFILE			;
-	CALL	BDOS			; Returns A=255 if error, but we don't care
+	ld  DE, DFCB			; Delete file first
+	ld 	C, DELFILE			;
+	CALL BDOS				; Returns A=255 if error, but we don't care
 	ret
 
 CloseFile:
-	ld  	DE,DFCB			; Close the file
-	ld 	C,CLOSEFIL
-	call	BDOS
+	ld  DE, DFCB			; Close the file
+	ld 	C, CLOSEFIL
+	call BDOS
 	ret
 
 Done:
-	call	CloseFile
-	ld	C,ACK				; Tell uploader we're done
-	call	CONOUT
-	ld 	HL,msgSucces1		; Print success message and filename
-	call	PrintString0
-	call	PrintFilename
+	call CloseFile
+	ld	C, ACK				; Tell uploader we're done
+	call CONOUT
+	ld 	HL, msgSucces1		; Print success message and filename
+	call PrintString0
+	call PrintFilename
 	ld 	HL,msgSucces2
-	call 	PrintString0
-	jp	Exit
+	call PrintString0
+	jp Exit
 
 FailCreateFile:
-	ld	HL,msgFailCre
-	call	PrintString0
-	call	PrintFilename
-	ld	HL,msgCRLF
-	jp	Exit
+	ld	HL, msgFailCre
+	call PrintString0
+	call PrintFilename
+	ld	HL, msgCRLF
+	jp Exit
 
 FailWrite:
-	ld	HL,msgFailWrt
+	ld	HL, msgFailWrt
 	jp	Die
 
 NoFileName:
-	ld 	HL,msgNoFile
-	call 	PrintString0
+	ld 	HL, msgNoFile
+	call PrintString0
 	jp	Exit
 
 Failure:
-	ld 	HL,msgFailure
+	ld 	HL, msgFailure
 	jp	Die
 
 Cancelled:
-	ld 	HL,msgCancel
+	ld 	HL, msgCancel
 	jp	Die
 
 Die:
@@ -244,9 +248,9 @@ Die:
 	call	CloseFile
 	call	DeleteFile
 Exit:
-	ld	SP,(oldSP)
-	;jp 0					; warm boot after
-	ret
+	;ld	SP,(oldSP)
+	jp 0					; warm boot after
+	;ret
 
 
 ;
@@ -378,7 +382,7 @@ CONOUT:
 
 CONST:
 	IN A, (UALSR)           ; read Line Status Register           
-	BIT 0, A                 ; bit set when Rx Holding register 
+	BIT 0, A                ; bit set when Rx Holding register 
 	jp z, .no_char
 
 	ld a, $FF				; else have a char ready to read
@@ -418,7 +422,7 @@ packet:	 	DS 	1	; SOH
 	 		DS	1 	; chksum
 
 ;CRC16:	DW 1
-stack:	 	DS 	256
-stackend: 	EQU $
+	 	DS 	256
+stack: 	EQU $
 
 			END
