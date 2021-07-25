@@ -36,7 +36,6 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
 ;
             org	0100h
 
-    ld (CPMSP), sp          ; save CP/M stack pointer
     ld sp, stack            ; set programme stack space
 
     ld hl, str_signon
@@ -54,11 +53,11 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     jp z, done
     cp 'A'
     jp c, .do_bs            ; < 'A' so try again
-    cp 'Q'
+    cp 'E'
     jp c, .got              ; < 'Q' so got a drive letter
     cp 'a'
     jp c, .do_bs
-    cp 'q'
+    cp 'e'
     jp nc, .do_bs
 
     jp .got
@@ -70,7 +69,7 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
 
 .got:
     sub 'A'                 ; if A = 0 thru 15 then valid drive
-    cp 16                   ; allowing for P:
+    cp 4 ;16                   ; allowing for P:
     jp c, .entered_drive    ; must be uppercase
 
     sub $20
@@ -110,16 +109,6 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     cp 0
     jp nz, select_fail      ; call failed
 
-    ;ld bc, 127
-    ;ld hl, buffer
-    ;ld (hl), $e5
-    ;ld de, buffer+1
-    ;ldir                    ; fill directory entries with e5
-
-    ld de, buffer
-    ld c, F_DMAOFF          ; set file io buffer
-    call BDOS
-
     ld c, DRV_DPB
     call BDOS               ; get DPB for wanted disk drive
     ld (DPBaddress), hl     ; returns HL = DPB address
@@ -144,10 +133,6 @@ select_fail:
     ; W cks Checksum
     ; W off Offset
     ;
-    ;ld de, DPB
-    ;ld bc, 15
-    ;ldir
-
     call PRINT_NEWLINE
     ld hl, str_format
     call PRINT_STR
@@ -334,14 +319,13 @@ format_go:
     ;
     ; start the format
     ;
-    ;ld bc, (buffer)
-    ;call setdma             ; call BIOS setdma
+    ld bc, buffer
+    call setdma             ; call BIOS setdma
     ld bc, 0                ; tracks start at 0
     ld (track), bc
 track_loop:	
-    ld bc, 1	            ; sectors start at 1
+    ld bc, 0	            ; sectors start at 0
     ld (sector), bc
-    ld bc, (track)
 
     ;
     ; print track
@@ -357,22 +341,25 @@ track_loop:
     call PRINT_CHAR
     ld a, 13               ; CR to overwrite line
     call PRINT_CHAR
-
+    ld bc, (track)
     call settrk             ; call BIOS settrk
+    
+    ld bc, 0                ; start at sector 0
+    ld hl, (spt)            ; sectors per track
+    dec hl                  ; because sectors start at 0
+    
 sector_loop:	
-    ;ld bc, (buffer)
-    ;call setdma             ; call BIOS setdma
-    ld bc, (sector)
+    push bc
     call setsec             ; call BIOS setsec
     call write              ; call BIOS write
-    ld hl, (spt)
-    ld a, (sector)
-    cp (hl)                 ; will either be 26 or 64, so only need to compare lsb
+    pop bc
+    ld a, c
+    cp l                    ; will either be 26 or 64, so only need to compare lsb                
     jp z, next_track
 
-    inc	a
-    ld (sector), a
-    jp sector_loop
+    inc bc                  
+    jp sector_loop          ; next sector
+
 next_track:	
     ld hl, (totaltracks)
     dec hl                  ; tracks start at 0, so take one off
@@ -392,9 +379,9 @@ complete:
     call PRINT_STR
 
 done:	
-    ld sp, (CPMSP)
-    ;jp 0                    ; return to CP/M with a warmboot
-    ret
+    ;ld sp, (CPMSP)
+    jp 0                    ; return to CP/M with a warmboot
+    ;ret
 ;
 ; multiplication function
 ; multiply two 16bit registers
@@ -442,8 +429,8 @@ str_format:
     db "Drive $"
 str_formatting:
     db "Formatting: T: $"
-str_formatting_sector:
-    db "h, S: $"
+;str_formatting_sector:
+ ;   db "h, S: $"
 str_complete:
     db "Formatting Completed\r\n$"
 str_total_tracks:
@@ -573,83 +560,79 @@ B2D64:
          LD HL,B2DBUF
          LD DE,B2DBUF+1
          LD (HL)," "
-B2DFILC: EQU $-1         ; address of fill-character
+B2DFILC: EQU $-1            ; address of fill-character
          LD BC,18
-         LDIR            ; fill 1st 19 bytes of buffer with spaces
+         LDIR               ; fill 1st 19 bytes of buffer with spaces
          LD (B2DEND-1),BC ;set BCD value to "0" & place terminating 0
-         LD E,1          ; no. of bytes in BCD value
-         LD HL,B2DINV+8  ; (address MSB input)+1
+         LD E,1             ; no. of bytes in BCD value
+         LD HL,B2DINV+8     ; (address MSB input)+1
          LD BC,#0909
          XOR A
 B2DSKP0: DEC B
-         JR Z,B2DSIZ     ; all 0: continue with postprocessing
+         JR Z,B2DSIZ        ; all 0: continue with postprocessing
          DEC HL
-         OR (HL)         ; find first byte <>0
+         OR (HL)            ; find first byte <>0
          JR Z,B2DSKP0
 B2DFND1: DEC C
          RLA
-         JR NC,B2DFND1   ; determine no. of most significant 1-bit
+         JR NC,B2DFND1      ; determine no. of most significant 1-bit
          RRA
-         LD D,A          ; byte from binary input value
+         LD D,A             ; byte from binary input value
 B2DLUS2: PUSH HL
          PUSH BC
-B2DLUS1: LD HL,B2DEND-1  ; address LSB of BCD value
-         LD B,E          ; current length of BCD value in bytes
-         RL D            ; highest bit from input value -> carry
+B2DLUS1: LD HL,B2DEND-1     ; address LSB of BCD value
+         LD B,E             ; current length of BCD value in bytes
+         RL D               ; highest bit from input value -> carry
 B2DLUS0: LD A,(HL)
          ADC A,A
          DAA
-         LD (HL),A       ; double 1 BCD byte from intermediate result
+         LD (HL),A          ; double 1 BCD byte from intermediate result
          DEC HL
-         DJNZ B2DLUS0    ; and go on to double entire BCD value (+carry!)
+         DJNZ B2DLUS0       ; and go on to double entire BCD value (+carry!)
          JR NC,B2DNXT
-         INC E           ; carry at MSB -> BCD value grew 1 byte larger
-         LD (HL),1       ; initialize new MSB of BCD value
+         INC E              ; carry at MSB -> BCD value grew 1 byte larger
+         LD (HL),1          ; initialize new MSB of BCD value
 B2DNXT:  DEC C
-         JR NZ,B2DLUS1   ; repeat for remaining bits from 1 input byte
-         POP BC          ; no. of remaining bytes in input value
-         LD C,8          ; reset bit-counter
-         POP HL          ; pointer to byte from input value
+         JR NZ,B2DLUS1      ; repeat for remaining bits from 1 input byte
+         POP BC             ; no. of remaining bytes in input value
+         LD C,8             ; reset bit-counter
+         POP HL             ; pointer to byte from input value
          DEC HL
-         LD D,(HL)       ; get next group of 8 bits
-         DJNZ B2DLUS2    ; and repeat until last byte from input value
-B2DSIZ:  LD HL,B2DEND    ; address of terminating 0
-         LD C,E          ; size of BCD value in bytes
+         LD D,(HL)          ; get next group of 8 bits
+         DJNZ B2DLUS2       ; and repeat until last byte from input value
+B2DSIZ:  LD HL,B2DEND       ; address of terminating 0
+         LD C,E             ; size of BCD value in bytes
          OR A
-         SBC HL,BC       ; calculate address of MSB BCD
+         SBC HL,BC          ; calculate address of MSB BCD
          LD D,H
          LD E,L
          SBC HL,BC
-         EX DE,HL        ; HL=address BCD value, DE=start of decimal value
-         LD B,C          ; no. of bytes BCD
-         SLA C           ; no. of bytes decimal (possibly 1 too high)
+         EX DE,HL           ; HL=address BCD value, DE=start of decimal value
+         LD B,C             ; no. of bytes BCD
+         SLA C              ; no. of bytes decimal (possibly 1 too high)
          LD A,"0"
-         RLD             ; shift bits 4-7 of (HL) into bit 0-3 of A
-         CP "0"          ; (HL) was > 9h?
-         JR NZ,B2DEXPH   ; if yes, start with recording high digit
-         DEC C           ; correct number of decimals
-         INC DE          ; correct start address
-         JR B2DEXPL      ; continue with converting low digit
-B2DEXP:  RLD             ; shift high digit (HL) into low digit of A
-B2DEXPH: LD (DE),A       ; record resulting ASCII-code
+         RLD                ; shift bits 4-7 of (HL) into bit 0-3 of A
+         CP "0"             ; (HL) was > 9h?
+         JR NZ,B2DEXPH      ; if yes, start with recording high digit
+         DEC C              ; correct number of decimals
+         INC DE             ; correct start address
+         JR B2DEXPL         ; continue with converting low digit
+B2DEXP:  RLD                ; shift high digit (HL) into low digit of A
+B2DEXPH: LD (DE),A          ; record resulting ASCII-code
          INC DE
 B2DEXPL: RLD
          LD (DE),A
          INC DE
-         INC HL          ; next BCD-byte
-         DJNZ B2DEXP     ; and go on to convert each BCD-byte into 2 ASCII
-         SBC HL,BC       ; return with HL pointing to 1st decimal
+         INC HL             ; next BCD-byte
+         DJNZ B2DEXP        ; and go on to convert each BCD-byte into 2 ASCII
+         SBC HL,BC          ; return with HL pointing to 1st decimal
          RET
 
-B2DINV:  DS 8            ; space for 64-bit input value (LSB first)
-B2DBUF:  DS 20           ; space for 20 decimal digits
-B2DEND:  DS 2, '$';S 1            ; space for terminating 0
+B2DINV:  DS 8               ; space for 64-bit input value (LSB first)
+B2DBUF:  DS 20              ; space for 20 decimal digits
+B2DEND:  DS 2, '$';S 1      ; space for terminating 0
 
 
-
-
-CPMSP:
-    dw 1
 ; BIOS entry points
 settrk: 
     db $c3, $1e, $f6        ; $f6 will be overwritten to match system BIOS
@@ -680,15 +663,10 @@ track:
     dw 1
 totaltracks:
     dw 1
-;DPB:
-;    ds 15
 DPBaddress:
     ds 2
 buffer:
-    ds 128, $e5      	    ; one CP/M record filled with 0E5h
-
-    ;include ""
-
+    ds 150, $e5      	    ; one CP/M record filled with 0E5h
     dw 32	                ; stack space
 stack:
     end
