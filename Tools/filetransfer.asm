@@ -783,6 +783,18 @@ buildFCB:
     ld hl, FCB
     call set_file_size_in_fcb
 
+    ; Clear all 16 disk allocation bytes. TODO: Actually, fill with sensible values
+    ld de, FCB
+    ld hl, 16
+    add hl, de
+    ex de, hl
+    ld b, 16+4
+    ld a, 0
+clear_allocation_loop:
+    ld (de), a
+    inc de
+    djnz clear_allocation_loop 
+
     ld c, F_MAKE
     ld de, FCB
     call BDOS               ; create file
