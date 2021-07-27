@@ -50,11 +50,11 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     cp $0d                  
     jp z, .ask              ; got a CR so reprint line
     cp CNTRLC
-    jp z, done
+    jp z, done              ; break
     cp 'A'
     jp c, .do_bs            ; < 'A' so try again
     cp 'E'
-    jp c, .got              ; < 'Q' so got a drive letter
+    jp c, .got              ; < 'E' so got a valid drive letter for this CP/M
     cp 'a'
     jp c, .do_bs
     cp 'e'
@@ -68,8 +68,8 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     jp .getloop
 
 .got:
-    sub 'A'                 ; if A = 0 thru 15 then valid drive
-    cp 4 ;16                   ; allowing for P:
+    sub 'A'                 ; if A = 0 thru 3 (15) then valid drive
+    cp 4                    ; change to 16 if using all drives (P:)
     jp c, .entered_drive    ; must be uppercase
 
     sub $20
@@ -150,12 +150,13 @@ select_fail:
     ; print spt, tracks, disk size
     ;
     ld hl, (DPBaddress)     ; spt
-    ld (spt), hl
-
+    ;ld (spt), hl
     ld a, (hl)
+    ld (spt), a
     call PRINT_HEX
     inc hl
     ld a, (hl)
+    ld (spt+1), a
     call PRINT_HEX
     ld a, ' '
     call PRINT_CHAR
@@ -203,26 +204,16 @@ select_fail:
     call PRINT_CHAR
 
     inc hl
-    ld a, (hl)
+    ld a, (hl)              ; drm-hi
     call PRINT_HEX
     inc hl
-    ld a, (hl)
+    ld a, (hl)              ; drm-lo
     call PRINT_HEX
     ld a, ' '
     call PRINT_CHAR
 
     inc hl
-    ld a, (hl)
-    call PRINT_HEX
-    ld a, ' '
-    call PRINT_CHAR
-    ld a, ' '
-    call PRINT_CHAR
-    ld a, ' '
-    call PRINT_CHAR
-
-    inc hl
-    ld a, (hl)
+    ld a, (hl)              ; alloc 0
     call PRINT_HEX
     ld a, ' '
     call PRINT_CHAR
@@ -232,19 +223,31 @@ select_fail:
     call PRINT_CHAR
 
     inc hl
-    ld a, (hl)
+    ld a, (hl)              ; alloc 1
+    call PRINT_HEX
+    ld a, ' '
+    call PRINT_CHAR
+    ld a, ' '
+    call PRINT_CHAR
+    ld a, ' '
+    call PRINT_CHAR
+
+    inc hl
+    ld a, (hl)              ; check vector-hi
     call PRINT_HEX
     inc hl
-    ld a, (hl)
+    ld a, (hl)              ; check vector-lo
     call PRINT_HEX
     ld a, ' '
     call PRINT_CHAR
 
     inc hl
-    ld a, (hl)
+    ld a, (hl)              ; offset-hi
+    ld (off), a
     call PRINT_HEX
     inc hl
-    ld a, (hl)
+    ld a, (hl)              ; offset-lo
+    ld (off+1), a
     call PRINT_HEX
     ld a, ' '
     call PRINT_CHAR
@@ -254,19 +257,37 @@ select_fail:
 
 
     ; calculate disk drives track count
+    ; ( (dsm << bsh) / spt ) + off + 1
     ; could do this the hard way, but lets hard code it
     ; drives A: & B: have 77 tracks
     ; drives C: & D: have 1024 tracks
-    ld a, (wanted_drive)
-    cp 2                    ; is it drive 0 or 1?
-    jr c, drivesAB
+    ;ld a, (wanted_drive)
+    ;cp 2                    ; is it drive 0 or 1?
+    ;jr c, drivesAB
 
-    ld bc, 1024             ; total tracks for 8MB drive
-    jp trackcount
-drivesAB:
-    ld bc, 77               ; total tracks for floppy
+    ;ld bc, 1024             ; total tracks for 8MB drive
+    ;jp trackcount
+;drivesAB:
+    ;ld bc, 77               ; total tracks for floppy
+
+    ld hl, (dsm)
+    ld a, (bsh)
+    ld b, a
+blockshift:
+    sla l
+    rl h
+    djnz blockshift         ; dsm << bsh
+    
+    ld b, h
+    ld c, l
+    ld de, (spt)
+    call Div16              ; (dsm << bsh) / spt
+    ld hl, (off)
+    adc hl, bc              ; + off
+    inc hl                  ; + 1
+
 trackcount:
-    ld (totaltracks), bc
+    ld (totaltracks), hl
 
     ld hl, str_total_tracks
     call PRINT_STR
@@ -349,12 +370,15 @@ track_loop:
     dec hl                  ; because sectors start at 0
     
 sector_loop:	
-    push bc
+    push hl                 ; save spt
+    push bc                 ; sector count
     call setsec             ; call BIOS setsec
+    ld c, 1                 ; write immediately
     call write              ; call BIOS write
     pop bc
+    pop hl
     ld a, c
-    cp l                    ; will either be 26 or 64, so only need to compare lsb                
+    cp l                    ; expect either 26 or 64 sectors (or < 256), so only need to compare lsb                
     jp z, next_track
 
     inc bc                  
@@ -410,6 +434,45 @@ Mul_Loop_1:
     jr nz, Mul_Loop_1
 
     ret
+
+
+;
+; Divide 16-bit values (with 16-bit result)
+; In: Divide BC by divider DE
+; Out: BC = result, HL = rest
+;
+Div16:
+    ld hl,0
+    ld a,b
+    ld b,8
+Div16_Loop1:
+    rla
+    adc hl,hl
+    sbc hl,de
+    jr nc,Div16_NoAdd1
+    add hl,de
+Div16_NoAdd1:
+    djnz Div16_Loop1
+    rla
+    cpl
+    ld b,a
+    ld a,c
+    ld c,b
+    ld b,8
+Div16_Loop2:
+    rla
+    adc hl,hl
+    sbc hl,de
+    jr nc,Div16_NoAdd2
+    add hl,de
+Div16_NoAdd2:
+    djnz Div16_Loop2
+    rla
+    cpl
+    ld b,c
+    ld c,a
+    ret
+
 
 str_signon:
     db "Format: v1.0 June 2021, Steve Bradford\r\n"
@@ -654,6 +717,8 @@ spt:
 bsh:
     db 0
 dsm:
+    dw 1
+off:
     dw 1
 drive:	
     db 0
