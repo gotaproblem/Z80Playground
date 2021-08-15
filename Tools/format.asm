@@ -270,10 +270,10 @@ select_fail:
 ;drivesAB:
     ;ld bc, 77               ; total tracks for floppy
 
-    ld hl, (dsm)
-    ld a, (bsh)
+    ld hl, (dsm)            ; disk size
+    ld a, (bsh)             ; block shift
     ld b, a
-blockshift:
+blockshift:                 ; disk size = disk size * by block size
     sla l
     rl h
     djnz blockshift         ; dsm << bsh
@@ -284,19 +284,22 @@ blockshift:
     call Div16              ; (dsm << bsh) / spt
     ld hl, (off)
     adc hl, bc              ; + off
-    inc hl                  ; + 1
+    inc hl                  ; + 1 = total tracks
 
 trackcount:
     ld (totaltracks), hl
 
     ld hl, str_total_tracks
     call PRINT_STR
-    ld a, (totaltracks+1)
-    call PRINT_HEX
-    ld a, (totaltracks)
-    call PRINT_HEX
-    ld a, 'h'
-    call PRINT_CHAR
+    ;ld a, (totaltracks+1)
+    ;call PRINT_HEX
+    ;ld a, (totaltracks)
+    ;call PRINT_HEX
+    ;ld a, 'h'
+    ;call PRINT_CHAR
+    ld hl, (totaltracks)
+    call B2D16              ; 
+    call PRINT_STR          ; print track number
     call PRINT_NEWLINE
 
     ld hl, str_disk_size
@@ -309,7 +312,9 @@ trackcount:
     inc de                  ; dsm + 1
     
     ; as we only need the disk size to be in KB, rather than multiply then later divide,
-    ; just multiply by 1 for a bsh of three, and multiply by 2 for a bsh of 4              
+    ; multiply by 1 for a bsh of 3, 
+    ; multiply by 2 for a bsh of 4, 
+    ; multiply by 3 for a bsh of 5 etc.              
     sub 3
     ld b, 0
     inc a
@@ -354,14 +359,20 @@ track_loop:
     ld hl, str_formatting
     call PRINT_STR
    
-    ld a, (track+1)
-    call PRINT_HEX
-    ld a, (track)
-    call PRINT_HEX
-    ld a, 'h'
-    call PRINT_CHAR
+    ;ld a, (track+1)
+    ;call PRINT_HEX
+    ;ld a, (track)
+    ;call PRINT_HEX
+    ;ld a, 'h'
+    ;call PRINT_CHAR
+    ;ld a, 13               ; CR to overwrite line
+    ;call PRINT_CHAR
+    ld hl, (track)
+    call B2D16
+    call PRINT_STR
     ld a, 13               ; CR to overwrite line
     call PRINT_CHAR
+
     ld bc, (track)
     call settrk             ; call BIOS settrk
     
