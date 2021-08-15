@@ -222,7 +222,7 @@ rwloop:
     cp USB_INT_SUCCESS+1
     jp z, lastRead          ; reached EOF
     
-    call PRINT_HEX
+    call PRINT_HEX          ; else error
     call PRINT_NEWLINE
     jp FATread_fail
 
@@ -326,8 +326,8 @@ exit1:
 ; function FATseek
 ; move to open FAT file position
 ;
-; on entry
-;   BC = 128 byte offset
+; on exit
+;   BC, DE, HL destroyed
 ;
 ;
 FATseek:
@@ -445,7 +445,7 @@ ignoreSpace:
 ; on exit
 ;   DEHL = 32 bit file size = HL low 16bits, DE high 16bits
 ;
-;   A, DE, HL destroyed
+;   A destroyed
 ;
 file_size:
     push bc
@@ -908,8 +908,6 @@ pause0:
 
 
 wait_til_not_busy:
-    ; call message
-    ; db 'waiting...', 13, 10, 0
     ld bc, 60000            ; retry max 60000 times!!!
 wait_til_not_busy1:
     push bc
@@ -925,12 +923,12 @@ wait_til_not_busy2:
     ld a, b
     or c
     jr nz, wait_til_not_busy1
-    ld hl, str_USB_TIMEOUT
-    call PRINT_STR
+;    ld hl, str_USB_TIMEOUT
+;    call PRINT_STR
     
     ret
-str_USB_TIMEOUT:
-    db '[USB TIMEOUT]\r\n', $
+;str_USB_TIMEOUT:
+;    db '[USB TIMEOUT]\r\n', $
 
 read_status_byte:
     ld a, GET_STATUS
@@ -1090,7 +1088,7 @@ B2DFILC: EQU $-1         ; address of fill-character
          LD (B2DEND-1),BC ;set BCD value to "0" & place terminating 0
          LD E,1          ; no. of bytes in BCD value
          LD HL,B2DINV+8  ; (address MSB input)+1
-         LD BC,#0909
+         LD BC,$0909
          XOR A
 B2DSKP0: DEC B
          JR Z,B2DSIZ     ; all 0: continue with postprocessing
