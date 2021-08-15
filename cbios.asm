@@ -45,6 +45,7 @@ iobyte:	equ	0003h			; i/o byte
 disks:	equ	04h				; number of disks in the system
 ;
 		org	bios			; origin of this program
+CBIOS_START: equ $
 ;
 ;	jump vector for individual subroutines
 ;
@@ -122,10 +123,22 @@ dpblk2:	;disk parameter block for 8MB - 1024 tracks
 	defm	4		;block shift factor = block size of 2048 bytes
 	defm	15		;block mask
 	defm	0		;null mask
-	defw	4095	;disk size-1
+	defw	4095	;disk size-1 (4096 * 2048)
 	defw	1023	;directory max
 	defm	255		;alloc 0
 	defm	255		;alloc 1
+	defw	0		;check size
+	defw	0		;track offset
+;
+dpblk3:	;disk parameter block for 8MB - 1024 tracks
+	defw	64		;sectors per track
+	defm	5		;block shift factor = block size of 4096 bytes
+	defm	31		;block mask
+	defm	1		;extent mask
+	defw	2047	;disk size-1 (in blocks = 2048 * 4096)
+	defw	1023	;directory max
+	defm	255		;alloc 0
+	defm	0		;alloc 1
 	defw	0		;check size
 	defw	0		;track offset
 ;
@@ -146,42 +159,44 @@ boot_real:
 	ld hl, signon
 	call PRINT_STR
 
-	ld hl, cpm_driveA		; starting disk image filename = "/A.DSK"
+	ld hl, cpm2_driveA		; starting disk image filename = "/A.DSK"
 	ld de, cpm_driveX
 	ld bc, 7
 	ldir					; make a copy of the disk image filename
 
 	xor	a		     		; zero in the accum
-	ld	(iobyte), a			; clear the iobyte
+	ld (iobyte), a			; clear the iobyte
 	ld a, 1					; setting drive to 1 (B:) triggers initialise
-	ld	(cdisk), a			; 
-	jp	gocpm				; initialize and go to cp/m
+	ld (cdisk), a			; 
+	ld (cdrive), a
+	jp gocpm				; initialize and go to cp/m
 ;
 wboot:
 	ld	sp, $80				; use space below buffer for stack
-	ld a, (cdisk)
+	;ld a, (cdisk)
+	ld a, (cdrive)
 	ld c, a					; select previous disk
 	;ld 	c, 0				; select disk 0
 	call seldsk
-	call home	    		; go to track 00, sector 1
+	call home	    		; go to track 0
 ;
 
 ; load CP/M from ROM (CCP only)
 ; this could be put on drive A's boot tracks
 	in a, (UAMCR)
 	and %11110111
-	out (UAMCR), a
-	ld a, ROM_ENABLE
-
-	ld hl, $1000			; this address needs to match main.asm CBIOS load point in ROM
+	out (UAMCR), a			; enable ROM
+	;ld a, ROM_ENABLE
+							; this address needs to match main.asm CBIOS load point in ROM
+	ld hl, $1000			; copy ROM CCP to RAM
 	ld de, ccp
-	ld bc, $0800
+	ld bc, $0800			; size of CCP
 	ldir
 
 	in a, (UAMCR)
 	or %00001000
-	out (UAMCR), a
-	ld a, ROM_DISABLE
+	out (UAMCR), a			; disable ROM
+	;ld a, ROM_DISABLE
 ;
 
 gocpm:
@@ -197,7 +212,7 @@ gocpm:
 	ld	bc, $80				; default dma address is 80h
 	call setdma
 ;
-							; as this is only done at a cold boot, we are always using drive A
+							; as this is only used at a cold boot, we are always using drive A
 	;ld	a, (cdisk)			; get current disk number
     ld 	c, 0;a				; send to the ccp
 	jp	ccp		     		; go to cp/m for further processing
@@ -265,8 +280,8 @@ home:	; move to track 0 of current drive
         ; translate this call into a settrk call with Parameter 00
 	LD     bc, 0			; select track 0
 	call   settrk
-	ld	   bc, 1
-	call   setsec
+	;ld	   bc, 1
+	;call   setsec
 	ret			    		; we will move to 00 on first read/write
 ;
 ;
@@ -276,15 +291,15 @@ seldsk:	;select drive given by register c
 	cp disks				; must be between 0 and 3
 	ret nc					; no carry if >= 4
 
-	; optimise by only doing the following if a change of disk
+	; optimise by checking current drive against wanted drive
+	ld a, (cdrive)
 	;ld a, (cdisk)
-	;cp c
-	;jp z, seldsk_noclose	; same disk so don't close
+	cp c
+	jp z, seldsk_optimise	; current and wanted drives are the same so no need to perform the following
 	
-	;call close_file
-
-;seldsk_noclose:
-	ld (cdisk), a			; selected disk is valid
+	ld a, c
+	ld (cdisk), a			; selected disk is valid, so save it
+	ld (cdrive), a
 
 	ld hl, cpm_driveX
 	add a, 'A'				; add real disk number to filename (eg. /A.DSK becomes /B.DSK)
@@ -293,14 +308,14 @@ seldsk:	;select drive given by register c
 
 ;	disk number is in the proper range
 ;	compute proper disk parameter header (DPH) address
-	LD 	l, c				; l=disk number 0, 1, 2, 3
-	LD 	h, 0				; high order zero
-	ADD	HL,HL				; *2
-	ADD	HL,HL				; *4
-	ADD	HL,HL				; *8
-	ADD	HL,HL				; *16 (size of each header)
-	LD	DE, dpbase
-	ADD	HL,DE				; hl = dpbase (diskno*16)
+	ld 	l, c				; L = disk number 0, 1, 2, 3
+	ld 	h, 0				; high order zero
+	add	hl, hl				; *2
+	add	hl, hl				; *4
+	add	hl, hl				; *8
+	add	hl, hl				; *16 (size of each header)
+	ld	de, dpbase
+	add	hl, de				; hl = dpbase (diskno*16)
 	ld (cdph), hl			; save current disk drives dph address
 
 	ld de, 10		
@@ -319,16 +334,8 @@ seldsk:	;select drive given by register c
 
 	ld (cspt), bc			; save curent disk drives spt value
 
-
 	ld hl, cpm_driveX
-	call open_file
-
-	;call PRINT_NEWLINE
-	;ld hl, cpm_driveX
-	;call PRINT_STR
-	;call PRINT_NEWLINE
-	;ld bc, 200				; 2ms delay
-	;call hw_pause
+	call open_file			; open selected disks disk image
 
 seldsk_optimise:
 	ld hl, (cdph)					
@@ -389,45 +396,62 @@ read_fail:
     ret
 
 drive_seek:
-	;ld bc, (cspt)			; cspt set by setsec
-	ld a, (cspt)
+	ld bc, (cspt)			; current drive's sectors per track
 	; calculate number of cpm records (128 byte records)
 	; cpmrec = (spt * track) + sector
-	ld de, (track)
-	;call DE_Times_BC		; track * spt (de * bc) returns answer in dehl
-	call DE_Times_A
-	;ld a, (prev_sector)
-	;ld b, a
-	;ld a, (sector)
-	;sub b
-	;jp z, seek_fast			; same sector
+	ld de, (track)	
+	call DE_Times_BC		; track * spt (de * bc) returns answer in dehl
 
-	;cp 1
-	;jp z, seek_fast			; next sector
-	
+	;push de				; debug - check to see if DE is being used - expect not
+	;ld a, d
+	;or e
+	;cp 0
+	;jp z, ds_cont
 
-;seek_slow:
+	;push hl
+	;ld hl, str_ds_debug
+	;call PRINT_STR
+	;pop hl
+
+;ds_cont:
+	;pop de
+
 	ld bc, (sector)
 	add hl, bc				; add sector to hl - might need to be a 32bit add
-	
-	; hl is number of cpm records (128 bytes each)
-	; seek offset needs to be in bytes, multiply by 128
 
-	; dehl = (spt * track) + sector
+	; DEHL = (spt * track) + sector
+	; DEHL is number of cpm records (128 bytes each)
+	; seek offset needs to be in bytes, so multiply by 128
+
 	; now need to multiply by 128 to get byte offset
-	ex de, hl
-	ld bc, 128				; de * 128
-	call DE_Times_BC		; result in dehl
-	;jp _seek
+	;ex de, hl
+	;ld bc, 128				; de * 128
+	;call DE_Times_BC		; result in dehl
 
-;seek_fast:
-	;ld bc, 128
-	;adc hl, bc
-	;jp nc, _seek
+	; for an 8MB disk, the max number of CP/M records is 65536 = 0xFFFF
+	; so, DE should always be 0 at this point
+	; use DE to shift in to
+	; rotate left 7 (multiply by 128)
+	; DE = high 16bits, HL = low 16bits
+	ld d, 0
+	ld e, h					; copy H to E
+	srl e					; shift right once
 
-	;ld bc, de
-	;ld a, e
-	;add 1
+	ld a, h
+	rrc a
+	and $80
+	ld b, a
+	ld a, l
+	srl a
+	or b
+	ld b, a
+
+	ld a, l
+	rrc a
+	and $80
+	ld l, a
+	ld h, b
+	
 _seek:
 	call move_to_file_pointer ; altered to use dehl
 	cp USB_INT_SUCCESS
@@ -439,7 +463,8 @@ _seek:
 ; end drive_seek
 str_seek_fail:
 	db "Seek failed \r\n", 0
-
+str_ds_debug:
+	db "\r\n32bit seek offset\r\n", 0
 
 ; Write one CP/M record to disk.
 ; Return a 00h in register a if the operation completes properly, and 0lh if an error occurs during the write.
@@ -500,68 +525,6 @@ Mul_Loop_1:
     jr nz, Mul_Loop_1
 
     ret
-
-
-DE_Times_A:
-;===============================================================
-;Inputs:
-;     DE and A are factors
-;Outputs:
-;     A is unchanged
-;     BC is unchanged
-;     DE is unchanged
-;     HL is the product
-;speed: min 199 cycles
-;       max 261 cycles
-;        212+6b cycles +15 if odd, -11 if non-negative
-;=====================================Cycles====================
-;1
-     ld hl,0            ;210000           10      10
-     rlca                   ;07             4
-     jr nc,$+5
-	 ld h,d
-	 ld e,l  ;3002626B   12+14p
-;2
-     add hl,hl              ;29            --
-     rlca                   ;07             4
-     jr nc,$+3
-	 add hl,de  ;300119     12+6b
-;3
-     add hl,hl              ;29            11
-     rlca                   ;07             4
-     jr nc,$+3
-	 add hl,de  ;300119     12+6b
-;4
-     add hl,hl              ;29            11
-     rlca                   ;07             4
-     jr nc,$+3
-	 add hl,de  ;300119     12+6b
-;5
-     add hl,hl              ;29            11
-     rlca                   ;07             4
-     jr nc,$+3
-	 add hl,de  ;300119     12+6b
-;6
-     add hl,hl              ;29            11
-     rlca                   ;07             4
-     jr nc,$+3
-	 add hl,de  ;300119     12+6b
-;7
-     add hl,hl              ;29            11
-     rlca                   ;07             4
-     jr nc,$+3
-	 add hl,de  ;300119     12+6b
-;8
-     add hl,hl              ;29            11
-     rlca                   ;07             4
-     ret nc                 ;D0         11-6b
-     add hl,de              ;300119     12+6b
-     ret
-
-
-
-
-
 
 str_cpm_msg1: 	db 'Configure CH376 module...',13,10,0
 ;str_cpm_msg2: 	db 'Check CH376 module exists...',13,10,0
@@ -758,28 +721,29 @@ endif
 ;	system	memory image (the space must be available,
 ;	however, between"begdat" and"enddat").
 ;
-prev_sector:
-		defs	2
+;prev_sector:
+;		defs	2
 track:	defs	2			; two bytes for expansion
 sector:	defs	2			; two bytes for expansion
 dmaad:	defs	2			; direct memory address
+cdrive: defs	1			; current drive
 cdpb:	defs	2			; current disks dpb address
 cdph:	defs	2			; current disks dph address
 cspt:	defs	2			; current disks sector per track
 ;
 ;	scratch ram area for bdos use
-begdat:	equ	$	 			; beginning of data area
+;begdat:	equ	$	 			; beginning of data area
 dirbf:	defs	128	 		; scratch directory area
 all00:	defs	31	 		; allocation vector 0
 all01:	defs	31	 		; allocation vector 1
 all02:	defs	255	 		; allocation vector 2
 all03:	defs	255	 		; allocation vector 3
-chk00:	defs	16			; check vector 0
-chk01:	defs	16			; check vector 1
+;chk00:	defs	16			; check vector 0
+;chk01:	defs	16			; check vector 1
 ;chk02:	defs	16	 		; check vector 2
 ;chk03:	defs	16	 		; check vector 3
 ;
-enddat:	equ	$	 			; end of data area
-datsiz:	equ	$-begdat;		; size of data area
-
+;enddat:	equ	$	 			; end of data area
+;datsiz:	equ	$-begdat;		; size of data area
+CBIOS_LENGTH: equ $-CBIOS_START
 	end
