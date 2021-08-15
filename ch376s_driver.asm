@@ -137,10 +137,11 @@ wait2:
     or c
     jr nz, wait1
 
-    push hl                 ; save hl for calling code
-    ld hl, str_timeout
-    call PRINT_STR
-    pop hl
+    ;push hl                 ; save hl for calling code
+    ;ld hl, str_timeout
+    ;call PRINT_STR
+    ;pop hl
+    call wait               ; try again
     ret
 ch376_fault:
     push hl
@@ -503,5 +504,6 @@ close_file:
     ret
 
 
-cpm_driveA: db "/A.DSK", 0, 0, 0, 0, 0, 0, 0, 0, 0
-cpm_driveX: ds 13, 0
+cpm2_driveA: db "/A.DSK", 0, 0, 0, 0, 0, 0, 0, 0, 0
+cpm3_driveA: db "/CPM3.DSK", 0, 0, 0, 0, 0, 0
+cpm_driveX: ds 15, 0
