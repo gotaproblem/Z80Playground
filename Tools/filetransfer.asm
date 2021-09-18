@@ -4,15 +4,11 @@
 ; function TFER
 ; read FAT files and write them to CP/M
 ;
-; idea is to read a FAT file in chunks of say 10KB, and write to RAM.
-; Use the CP/M built-in SAVE function to create the CP/M file
 ;
-; Files to be transferred, will be placed in folder TFER on USB memory stick
+; Files to be transferred, must be placed in folder /TFER on USB memory drive
 ;
 ; syntax
-;   tfer <from> <to>
-;       <from> FAT filename
-;       <to> CP/M filename
+;   tfer
 ;
 CDRIVE      equ $4          ; current disk drive
 BDOS        equ $5          ; BDOS jump vector
