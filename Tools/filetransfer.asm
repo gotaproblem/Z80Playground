@@ -4,15 +4,16 @@
 ; function TFER
 ; read FAT files and write them to CP/M
 ;
-; idea is to read a FAT file in chunks of say 10KB, and write to RAM.
-; Use the CP/M built-in SAVE function to create the CP/M file
 ;
-; Files to be transferred, will be placed in folder TFER on USB memory stick
+; Files to be transferred, must be placed in folder /TFER on USB memory drive
 ;
 ; syntax
-;   tfer <from> <to>
-;       <from> FAT filename
-;       <to> CP/M filename
+;   tfer
+;
+; History
+;   1.0     June        Initial release
+;   1.1     September   Added message for empty /TFER directory
+;
 ;
 CDRIVE      equ $4          ; current disk drive
 BDOS        equ $5          ; BDOS jump vector
@@ -140,6 +141,16 @@ done:
 
 done_cont:
     push bc                 ; save file count
+
+    ld a, b                 ; v1.1 - print empty if no files to transfer
+    cp 0                    ; empty /TFER directory
+    jp nz, have_files
+
+    ld hl, str_empty_tfer
+    call PRINT_STR
+    jp exit
+    
+have_files:
     ld hl, str_copy
     call PRINT_STR
     
@@ -515,10 +526,12 @@ str_tab:
     db "   $"
 str_copy:
     db "Copy all files [Y/N]: $"
+str_empty_tfer:
+    db "Empty\r\n$"
 str_write_fail:
     db "CP/M Write failed\r\n$"
 str_signon:
-    db "File Transfer: v1.0 June 2021, Steve Bradford\r\n"
+    db "File Transfer: v1.1 September 2021, Steve Bradford\r\n"
     db "Z80 Playground [8bitStack.co.uk]\r\n\n"
     db '$'
 
