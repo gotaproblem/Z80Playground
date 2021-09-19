@@ -29,7 +29,7 @@ Disabled:   DB      "Disabled", EOS
 RomState:   DB      "32K ROM is ", EOS
 SignOn:    
             ;DB      $1b, '[2J', $1b, '[H'
-            DB      "Monitor v1.0 May 2021, Steve Bradford\r\n"
+            DB      "Monitor v1.1 August 2021, Steve Bradford\r\n"
             DB      "Z80 Playground [8bitStack.co.uk]\r\n"
             DB      0
 Prompt:     DB      "MON> ", 0
@@ -44,6 +44,7 @@ Prompt:     DB      "MON> ", 0
             ;Include "tests.asm"
             Include "monitor.asm"
             Include "commands.asm"
+            include "ch376s_driver.asm"
 ;
 ; COLD BOOT
 ;
@@ -111,14 +112,15 @@ CONT:       CALL    PRINT_NEWLINE
 			org $1000					; just to make it easy to find
 CPM_BIN:
             incbin "cpm22.bin"
-CPM_LENGTH  equ $ - CPM_BIN
+CPM_LENGTH  equ $-CPM_BIN
 
 			org $3000					; just to make it easy to find
 CBIOS_BIN:
             incbin "cbios.bin"
-CBIOS_LENGTH equ $ - CBIOS_BIN
+CBIOS_LENGTH equ $-CBIOS_BIN
 ;
 ;
-
+            ;print CPM_LENGTH
+            ;print CBIOS_LENGTH
 PROGRAMME_END:
             END

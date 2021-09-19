@@ -18,7 +18,8 @@ str_commands:	DB		" Available Commands are: ", CR, LF
 				DB		"    move - move data in memory", CR, LF
 				DB		"    load - load data to address", CR, LF
                 DB		"    rom - enable/disable ROM", CR, LF
-				DB		"    cpm - load CP/M Operating System", CR, LF
+				DB		"    cpm2 - load CP/M v2.2 Operating System", CR, LF
+				DB		"    cpm3 - load CP/M Plus Operating System", CR, LF
 				DB		"    test - check Hardware", CR, LF
 				DB		"    halt - halt CPU", CR, LF
 				DB		"    toggle - toggle User LED1", CR, LF
@@ -32,7 +33,8 @@ str_cmd_fill    DB      "fill", EOS
 str_cmd_move    DB      "move", EOS
 str_cmd_load    DB      "load", EOS
 str_cmd_rom     DB      "rom", EOS
-str_cmd_cpm     DB      "cpm", EOS
+str_cmd_cpm2    DB      "cpm2", EOS
+str_cmd_cpm3    DB      "cpm3", EOS
 str_cmd_test	DB		"test", EOS
 str_cmd_halt	DB		"halt", EOS
 str_cmd_toggle	DB		"toggle", EOS
@@ -47,7 +49,8 @@ CMD_TABLE:	    DW		str_cmd_help,       cmd_help
                 DW		str_cmd_move,       cmd_move	    ; move command
                 DW		str_cmd_load,       cmd_load	    ; load command
                 DW		str_cmd_rom,        cmd_rom	    	; rom command
-				DW		str_cmd_cpm,        cmd_cpm	    	; cpm command
+				DW		str_cmd_cpm2,       cmd_cpm2	   	; cpm2 command
+				DW		str_cmd_cpm3,       cmd_cpm3    	; cpm3 command
 				DW		str_cmd_halt,       cmd_halt	    ; halt command
 				DW		str_cmd_toggle,     cmd_toggle	    ; toggle command
 
@@ -76,8 +79,7 @@ two_args:    	ld		hl, (V_ARGV)				; first argument
 
                 ld      a, (V_ARGC)                 ; recheck for arg count
                 cp      1
-                ;jr      nz, arg2
-                jr     z, arg2_2                    ; only one argument, so HL and DE will be the same
+                jr     	z, arg2_2                   ; only one argument, so HL and DE will be the same
 				                         
 arg2:			ld		hl, (V_ARGV + 2)			; second argument
     			call	str_parse_word
@@ -107,35 +109,32 @@ peek_memory:
 				ld		l, a
 				inc		de						; multiple of 16? (print extra line)
 row_loop:		push 	hl
-
 				ld 		a, l					; print header every 256 bytes
 				cp 		0
 				call 	z, draw_header
 				pop 	hl
-
-				ld		a, (hl)
+				ld		a, h
 				call	PRINT_HEX				; print the starting address
-				inc		hl
-				ld		a, (hl)
+				ld 		a, l
 				call	PRINT_HEX
 				ld		a, SPACE
-				call	PRINT_CHAR			    ; print space
+				call	PRINT_CHAR			    ; print two spaces
 				call	PRINT_CHAR
-				push	hl						
+				push	hl						; save row start address
 				ld		b, 16					; 16 bytes to display 
-byte_loop:		ld		a, (HL)					; load byte at (HL)
+byte_loop:		ld		a, (hl)					; load byte at (HL)
 				call	PRINT_HEX;				; print it
 				
 				ld		a, SPACE				; print a space
 				call 	PRINT_CHAR
-				inc		HL						; 
+				inc		hl						; 
 				djnz	byte_loop				; loop for 16
 				
 				ld		a, '|'					; print a '|'
 				call	PRINT_CHAR
 				ld		b, 16					; 16 bytes to display
-				pop		hl						; get the start address again
-ascii_loop:		ld		a, (HL)					;
+				pop		hl						; get the row start address
+ascii_loop:		ld		a, (hl)					;
 				cp		$20						; is this a displayable character? 
 				jp		c, dot					; A < ' '
 				cp		$7F
@@ -143,20 +142,24 @@ ascii_loop:		ld		a, (HL)					;
 dot:
 				ld		a, '.'					; no - print '.' instead
 ascii_loop_1:	call	PRINT_CHAR				; print character
-				inc		HL						; HL now points to the next byte in memory
+				inc		hl						; HL now points to the next byte in memory
 				djnz	ascii_loop				; do this B times (16)
 				
 				ld		a, '|'					; print a '|'
 				call	PRINT_CHAR
-				call	PRINT_NEWLINE
-				
-				; check to do this until de >= hl
+				call	PRINT_NEWLINE			; end of row
+
+				ld 		a, l
+				or 		h
+				jp 		z, peek_finish			; if HL = 0 then reached end of RAM
+
 				push	hl						; save hl
 				and		a						; reset carry flag
-				sbc		hl, de					; do HL - DE, carry inticates DE > HL
+				sbc		hl, de					; do HL - DE, carry indicates DE > HL
 				pop		hl						; restore hl since the above modifies it
-				jr		c, row_loop				; if DE > HL, do next row
+				jp		c, row_loop				; if DE > HL, do next row
 				
+peek_finish:
 				pop		af						; restore registers
 				pop		de
 				pop		hl
@@ -444,9 +447,9 @@ cmd_toggle_end:
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; cmd_cpm - load cp/m	
+; cmd_cpm2 - load CP/M 2.2
 ; 
-cmd_cpm:
+cmd_cpm2:
 	; copy CP/M (CCP + BDOS) to RAM
 	ld hl, CPM_BIN
 	ld de, $e000 ;$dc00						; alter this if CP/M and/or BIOS changes
@@ -470,8 +473,8 @@ cmd_cpm:
 
 	jp $f600 ;$f200							; alter this if CP/M and/or BIOS changes
 
-cmd_cpm_end:
-	ret
+;cmd_cpm_end:
+;	ret
 ;
 page0:
 	db $c3
@@ -487,3 +490,122 @@ bdos_base:
 	db $06
 	db $e8 ;$e4								; alter this if CP/M and/or BIOS changes
 ;
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; cmd_cpm3 - load CP/M Plus	
+; 
+; read boot disk (A:) track 1 sector 2 thru track 2 sector 26, and write contents to RAM $0100
+cmd_cpm3:
+	ld hl, str_cpm3_msg1
+	call PRINT_STR
+
+	call ch376s_init					; initialise CH376S module
+										; mount disk A
+	ld hl, cpm3_driveA					; boot disk image filename = "/CPM3.DSK"
+	call open_file
+	jp nz, cmd_cpm3_open_failed
+
+	ld bc, 25+26                        ; remainder of track 0 sectors + all of track 1
+    ld hl, $0001
+    ld (sector), hl
+    ld hl, $0100                        ; writing data to TPA
+    ld (dmaad), hl
+ldrloop:
+    push bc								; save loop count
+    call seek							; seek to file position
+    call read_from_file					; read 128 bytes (one sector) and write directly to TPA
+	cp 0
+	jp nz, ldr_read_failed				; read failed
+
+    ld hl, (dmaad)						; 
+    ld de, 128
+    add hl, de
+    ld (dmaad), hl                      ; add 128 bytes to dma buffer (TPA)
+    ld hl, (sector)
+    inc hl
+    ld (sector), hl						; increment sector count for seek
+    pop bc
+    djnz ldrloop                        ; next sector
+
+    jp $0100                            ; pass to CPMLDR.COM 
+
+ldr_read_failed:
+    pop bc                              ; sync stack
+    ld hl, str_cpm3_read_failed
+    call PRINT_STR
+    halt
+
+;str_ldr_read_failed:
+;    db "Cold Boot Loader - Read failed\r\n", 0
+
+;	jp $0080							; load T:0 S:2 thru T:1 S:26 at most
+
+
+	; CP/M 3, has a four stage boot process before you get to the command prompt. 
+	;
+	; 1. the system ROM loads the first sector of the first track of the disk storage and executes it. 
+	; This loads in a small program called CPMLDR.COM from the first track and executes it. 
+	; 
+	; 2. CPMLDR.COM contains a minimal implementation of CP/M Plus and a BIOS. 
+	; This loads the file CPM3.SYS off the file system to the correct location in memory and executes it. 
+	;
+	; 3. The system is then initialized by CPM3.SYS, vectors set and so on.
+	;
+	; 4. CCP.COM is loaded into the program area and executed, giving you the command prompt. 
+	;
+	; It is done this way so the operating system code is in a file, not on the boot track, 
+	; which makes the task of updating or patching it a little easier.
+
+
+
+
+cmd_cpm3_end:
+	ret
+
+cmd_cpm3_read_failed:
+	ld hl, str_cpm3_read_failed
+	call PRINT_STR
+	ret
+
+str_cpm3_read_failed:
+	db "Cold Boot Loader - Read failed\r\n\0"
+
+cmd_cpm3_open_failed:
+	ld hl, str_cpm3_open_failed
+	call PRINT_STR
+	ret
+
+str_cpm3_open_failed:
+	db "Cold Boot Loader - Open CPM3.DSK failed\r\n\0"
+
+str_cpm3_msg1: 	
+	db "Configure CH376 module...\r\n\0"
+
+dmaad dw 1								; needed for ch376s driver
+sector dw 1
+
+
+;
+; function seek
+;
+seek:	
+	ld de, (sector)
+	ld bc, 128							; de * 128
+	call DE_Times_BC					; result in dehl
+
+_seek:
+	call move_to_file_pointer 			; altered to use dehl
+	cp USB_INT_SUCCESS
+	ret z
+
+	ld hl, str_seek_fail
+	call PRINT_STR
+	ret
+; end drive_seek
+
+str_seek_fail:
+	db "Cold Boot Loader - Seek failed \r\n", 0
+
+

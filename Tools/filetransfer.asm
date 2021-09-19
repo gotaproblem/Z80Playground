@@ -9,11 +9,14 @@
 ;
 ; syntax
 ;   tfer
+<<<<<<< HEAD
 ;
 ; History
 ;   1.0     June        Initial release
 ;   1.1     September   Added message for empty /TFER directory
 ;
+=======
+>>>>>>> 794a71c31ad9f0d141d0a042548880855651457f
 ;
 CDRIVE      equ $4          ; current disk drive
 BDOS        equ $5          ; BDOS jump vector
