@@ -12,4 +12,5 @@
 /bootsys.bin
 /cpm3_boot2.bin
 /*.bin
+/.DS_Store
 
