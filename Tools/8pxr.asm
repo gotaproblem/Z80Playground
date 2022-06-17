@@ -20,45 +20,45 @@ DFCBcr:		EQU DFCB+32 	; Current record
 ;
 ; BDOS function codes
 ;
-;WBOOT:	 EQU	0	; System Reset
-;GETCON: EQU	1	; Console Input A<char
-;OUTCON: EQU	2	; Console Output E=char
-;GETRDR: EQU	3	; Reader Input A<char
-;PUNCH:	 EQU	4	; Punch Output E=char
-;LIST:	 EQU	5	; List Output E=char
-;DIRCIO: EQU	6	; Direct Console I/O E=char/FE/FF A<char
-;GETIOB: EQU	7	; Get I/O Byte A<value
-;SETIOB: EQU	8	; Set I/O Byte E=value
-;PRTSTR: EQU	9	; Print $ String DE=addr
-;RDBUFF: EQU	10	; Read Console Buffer DE=addr
-;GETCSTS:EQU	11	; Get Console Status A<status (00empty FFdata)
-;GETVER: EQU	12	; Return Version Number HL<version
-;RSTDSK: EQU	13	; Reset Disk System
-;SETDSK: EQU	14	; Select Disk E=diskno
-;OPENFIL:EQU	15	; Open File DE=FCBaddr A<handle (FFerr)
-CLOSEFIL:EQU	16	; Close File DE=FCBaddr A<handle (FFerr)
-;GETFST: EQU	17	; Search for First DE=FCBaddr A<handle (FFerr)
-;GETNXT: EQU	18	; Search for Next A<handle (FFerr)
+;WBOOT:	 	EQU	0	; System Reset
+;GETCON: 	EQU	1	; Console Input A<char
+;OUTCON: 	EQU	2	; Console Output E=char
+;GETRDR: 	EQU	3	; Reader Input A<char
+;PUNCH:	 	EQU	4	; Punch Output E=char
+;LIST:	 	EQU	5	; List Output E=char
+;DIRCIO: 	EQU	6	; Direct Console I/O E=char/FE/FF A<char
+;GETIOB: 	EQU	7	; Get I/O Byte A<value
+;SETIOB: 	EQU	8	; Set I/O Byte E=value
+;PRTSTR: 	EQU	9	; Print $ String DE=addr
+;RDBUFF: 	EQU	10	; Read Console Buffer DE=addr
+;GETCSTS:	EQU	11	; Get Console Status A<status (00empty FFdata)
+;GETVER: 	EQU	12	; Return Version Number HL<version
+;RSTDSK: 	EQU	13	; Reset Disk System
+;SETDSK: 	EQU	14	; Select Disk E=diskno
+;OPENFIL:	EQU	15	; Open File DE=FCBaddr A<handle (FFerr)
+CLOSEFIL:	EQU	16	; Close File DE=FCBaddr A<handle (FFerr)
+;GETFST: 	EQU	17	; Search for First DE=FCBaddr A<handle (FFerr)
+;GETNXT: E	QU	18	; Search for Next A<handle (FFerr)
 DELFILE: 	EQU	19	; Delete File DE=FCBaddr A<handle (FFerr)
-;READSEQ:EQU	20	; Read Sequential DE=FCBaddr A<status (00ok)
+;READSEQ:	EQU	20	; Read Sequential DE=FCBaddr A<status (00ok)
 WRTSEQ:  	EQU	21	; Write Sequential DE=FCBaddr A<status (00ok)
 FCREATE: 	EQU	22	; Make File  DE=FCBaddr A<handle (FFerr)
-;RENFILE:EQU	23	; Rename File DE=FCBaddr A<handle (FFerr)
-;GETLOG: EQU	24	; Return Log-in Vector HL<bitmap
-;GETCRNT:EQU	25	; Return Current Disk A<diskno
+;RENFILE:	EQU	23	; Rename File DE=FCBaddr A<handle (FFerr)
+;GETLOG: 	EQU	24	; Return Log-in Vector HL<bitmap
+;GETCRNT:	EQU	25	; Return Current Disk A<diskno
 PUTDMA:		EQU	26	; Set DMA Address DE=addr
-;GETALOC:EQU	27	; Get Addr (ALLOC) HL<addr
-;WRTPRTD:EQU	28	; Write Protect Current Disk
-;GETROV: EQU	29	; Get Read-Only Vector HL<bitmap
-;SETATTR:EQU	30	; Set File Attributes DE=FCBaddr A<handle
-;GETPARM:EQU	31	; Get Addr (DISKPARMS) A<DPBaddr
-;GETUSER:EQU	32	; Set/Get User Code E=code (FFget) A<value
-;RDRANDOM:EQU	33	; Read Random DE=FCBaddr A<status
-;WTRANDOM:EQU	34	; Write Random DE=FCBaddr A<status
-;FILESIZE:EQU	35	; Compute File Size DE=FCBaddr
-;SETRAN: EQU	36	; Set Random Record DE=FCBaddr
-;LOGOFF: EQU	37	; Reset Drive DE=drivevector
-;WTSPECL:EQU	40	; Write Random with Zero Fill DE=FCBaddr A<status
+;GETALOC:	EQU	27	; Get Addr (ALLOC) HL<addr
+;WRTPRTD:	EQU	28	; Write Protect Current Disk
+;GETROV: 	EQU	29	; Get Read-Only Vector HL<bitmap
+;SETATTR:	EQU	30	; Set File Attributes DE=FCBaddr A<handle
+;GETPARM:	EQU	31	; Get Addr (DISKPARMS) A<DPBaddr
+;GETUSER:	EQU	32	; Set/Get User Code E=code (FFget) A<value
+;RDRANDOM:	EQU	33	; Read Random DE=FCBaddr A<status
+;WTRANDOM:	EQU	34	; Write Random DE=FCBaddr A<status
+;FILESIZE:	EQU	35	; Compute File Size DE=FCBaddr
+;SETRAN: 	EQU	36	; Set Random Record DE=FCBaddr
+;LOGOFF: 	EQU	37	; Reset Drive DE=drivevector
+;WTSPECL:	EQU	40	; Write Random with Zero Fill DE=FCBaddr A<status
 
 ;
 ; ASCII codes
@@ -77,8 +77,10 @@ C_:			EQU 'C'; Indicate use of CRC method
 ;
 			ORG 0100h
 
-	ld	SP,stack
+	ld sp, stack
 
+	di
+	
 	in a, (UAMCR)
 	and %11111110
 	out (UAMCR), a			; turn ULED1 off
@@ -106,7 +108,7 @@ C_:			EQU 'C'; Indicate use of CRC method
 	ld (pktNo1c), A
 
 GetNewPacket:		
-	ld A, 20				; We retry 20 times before giving up
+	ld A, 40				; We retry 40 times before giving up
 	ld (retrycnt), A
 
 NPloop:
@@ -395,7 +397,7 @@ CONST:
 ; Message strings
 ;
 str_signon:
-    db "Xmodem Receive: v1.0 June 2021, Steve Bradford\r\n"
+    db "Xmodem Receive: v1.1 October 2021, Steve Bradford\r\n"
     db "Z80 Playground [8bitStack.co.uk]\r\n\n"
     db 0
 msgFailWrt:	DB	CR,LF,'Failed writing to disk',CR,LF,0
@@ -420,9 +422,9 @@ packet:	 	DS 	1	; SOH
 	 		DS	1	; -PacketNo,
 	 		DS	128	; data*128,
 	 		DS	1 	; chksum
-
 ;CRC16:	DW 1
-	 	DS 	256
+
+	 		DS 	64	; stack space 32 addresses
 stack: 	EQU $
 
 			END

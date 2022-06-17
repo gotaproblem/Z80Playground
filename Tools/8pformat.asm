@@ -6,16 +6,21 @@
 ; *                                                      *
 ; * format a disk image                                  *
 ; *                                                      *
-; * 8pformat.asm                                         *
+; * format.asm                                           *
+; *                                                      *
+; * History                                              *
+; * Jun 2021 Initial release                             *
+; * Oct 2021 Allow format of same drive and accept drive *
+; * letter as argument                                   *
 ; *                                                      *
 ; ********************************************************
 ;
-; Write $e5 to each directory track/sector
-; Write $00 to each data track/sector.
-; Uses BIOS calls
 ;
-BDOS        equ $0005
-CNTRLC      equ $03
+BDOS        equ $5          ; CP/M BDOS vector address
+FCB         equ $5c         ; CP/M default File Control Block (FCB)
+BUF         equ $80         ; default dma buffer
+
+CNTRLC      equ $3
 ;
 ; define BDOS functions
 ;
@@ -29,17 +34,66 @@ F_CLOSE     equ $10         ; close file
 F_WRITE     equ $15         ; write record
 F_MAKE      equ $16         ; create file
 DRV_GET     equ $19         ; get current drive
-F_DMAOFF    equ $1a         ; set DMA address
+F_SETDMA    equ $1a         ; set DMA address
 DRV_DPB     equ $1f         ; get DPB address
 DRV_RESET   equ $25         ; selectively reset a disk drive
 ;
 ;
+disks       equ 4           ; should match CBIOS max disk drive count
+;
             org	0100h
 
-    ld sp, stack            ; set programme stack space
+    ld sp, stack            ; set programme stack space to end of programme
 
     ld hl, str_signon
     call PRINT_STR
+
+    ld a, (FCB)
+    ;ld c, F_SETDMA
+    ;ld de, BUF
+    ;call BDOS
+
+    ; check for command argument (drive to format)
+    ;ld hl, BUF
+posinc:
+    ;ld a, (hl)
+    cp 0
+    jp z, .ask              ; no argument, so prompt for drive
+
+    ;cp $20                  ; looking for end of programme name (SPACE)
+    ;inc hl
+    ;jp nz, posinc
+
+    ; got argument, check valid (looking for A: through P:)
+    ;ld a, (hl)
+
+    ;cp $61                  ; lowercase 'a'
+    ;jp nc, gotdrive         ; already uppercase
+
+    ;sub $20                 ; make uppercase
+
+gotdrive:
+    sub 1
+    ;cp 'A'
+    ;jp nc, invalid_drive    ; < A invalid
+    ld c, disks
+    ;ld a, 'A'
+    ;add a, c
+    cp c 
+    jp nc, invalid_drive     ; >= 'disks' invalid
+
+    ;inc hl                  ; next char in buffer should be semi-colon
+    ;ld a, (hl)
+    ;cp ':'
+    ;jp nz, .ask             ; didn't get semi-colon, so prompt for drive letter
+
+    add a, 'A'              ; convert drive number to letter
+    jp .got
+
+invalid_drive
+    ld hl, str_invalid_drive
+    call PRINT_STR
+    jp done
 
     ; ask which drive to format
 .ask
@@ -49,15 +103,20 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     call GETC               ; expect A thru D
     cp $0d                  
     jp z, .ask              ; got a CR so reprint line
+
     cp CNTRLC
     jp z, done              ; break
+
     cp 'A'
     jp c, .do_bs            ; < 'A' so try again
-    cp 'E'
-    jp c, .got              ; < 'E' so got a valid drive letter for this CP/M
+
+    cp 'F'
+    jp c, .got              ; < 'F' so got a valid drive letter for this CP/M
+
     cp 'a'
     jp c, .do_bs
-    cp 'e'
+
+    cp 'f'
     jp nc, .do_bs
 
     jp .got
@@ -68,8 +127,8 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     jp .getloop
 
 .got:
-    sub 'A'                 ; if A = 0 thru 3 (15) then valid drive
-    cp 4                    ; change to 16 if using all drives (P:)
+    sub 'A'                 ; if A = 0 thru 'disks' then valid drive
+    cp disks                ; change to 16 if using all drives (P:)
     jp c, .entered_drive    ; must be uppercase
 
     sub $20
@@ -92,14 +151,14 @@ DRV_RESET   equ $25         ; selectively reset a disk drive
     ld (drive), a	        ; save current drive
     
     ; can't be the same as we are logged on to
-    ld a, (wanted_drive)    ; get selected drive
-    ld hl, drive
-    cp (hl)
-    jp nz, .cont
+    ;ld a, (wanted_drive)    ; get selected drive
+    ;ld hl, drive
+    ;cp (hl)
+    ;jp nz, .cont
 
-    ld hl, str_select_error
-    call PRINT_STR
-    jp done
+    ;ld hl, str_select_error
+    ;call PRINT_STR
+    ;jp done
 
 .cont
     ld a, (wanted_drive)
@@ -486,7 +545,7 @@ Div16_NoAdd2:
 
 
 str_signon:
-    db "Format: v1.0 June 2021, Steve Bradford\r\n"
+    db "Format: v1.2 October 2021, Steve Bradford\r\n"
     db "Z80 Playground [8bitStack.co.uk]\r\n\n"
     db '$'
 str_question:
@@ -496,9 +555,12 @@ str_clear_line:
 str_newline:
     db "\r\n$"
 str_which_drive:
-    db "Select Drive to Format (cannot be the same as you are using): $"
-str_select_error:
-    db "You cannot format the drive you are logged in to\r\n$"
+    ;db "Select Drive to Format (cannot be the same as you are using): $"
+    db "Select Drive to Format: $"
+;str_select_error:
+;    db "You cannot format the drive you are logged in to\r\n$"
+str_invalid_drive:
+    db "Invalid Drive Selected\r\n$"
 str_format:
     db "Drive $"
 str_formatting:
@@ -506,7 +568,7 @@ str_formatting:
 ;str_formatting_sector:
  ;   db "h, S: $"
 str_complete:
-    db "Formatting Completed\r\n$"
+    db "Formatting Complete\r\n$"
 str_total_tracks:
     db "Total tracks: $"
 str_disk_size:
