@@ -76,7 +76,7 @@ BAUD_57600  EQU     8
 BAUD_115200 EQU     4
 
 
-; Memory Map
+; ROM Monitor Memory Map
 ; 0xFFFF
 ; 0xFF00 0.25K Variable space - see below
 ; 0xFEFF

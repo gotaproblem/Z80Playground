@@ -10,6 +10,12 @@
 ; *                                                      *
 ; * cbios.asm                                            *
 ; *                                                      *
+; * History                                              *
+; * v1.0   June      2021	Initial release              *
+; * v1.1   October   2021	Corrected hdd vector bytes   *
+; *                         Signon message change        *
+; * v1.2   January   2022   Fixed sectran ()             *
+; *                                                      *
 ; ********************************************************
 ;
 ; *************************************
@@ -36,13 +42,16 @@ DEBUG: DEFL 0
 ;
 ;
 ; Custom BIOS (CBIOS)
+; 63K System - best that can be done (need to free up over 512 bytes to make a 64K System)
+; A 63K System has enough space for 2x fdd, 3x hdd
 ;
-ccp:	equ	$e000 ;$dc00 			; base of ccp ($dc00 = 56k system)
-bdos:	equ	$e806 ;$e406 			; bdos entry
-bios:	equ	$f600 ;$f200 			; base of bios
-cdisk:	equ	0004h			; current disk number 0=a,... l5=p
-iobyte:	equ	0003h			; i/o byte
-disks:	equ	04h				; number of disks in the system
+ccp:	equ	$e000  			; base of ccp ($e000 = 63K System)
+bdos:	equ	$e806  			; bdos entry
+bios:	equ	$f600  			; base of bios
+cdisk:	equ	4				; current disk number 0=a,... 15=p
+iobyte:	equ	3				; i/o byte address
+disks:	equ	4				; number of disks in the system ( 2x fdd, 2x hdd)
+;
 ;
 		org	bios			; origin of this program
 CBIOS_START: equ $
@@ -71,11 +80,11 @@ wboote:
 ; custom calls
 ;	JP	msh		;monitor shell
 ;
-;	fixed data tables for four-drives 
+;	fixed data tables for five-drives 
 ;   standard ibm-compatible 8" disks use skew of 6 (drives A & B)
 ;
-;	disk Parameter header for disk 00
 dpbase:	
+;	disk Parameter header for disk 00
 	defw	trans, 0000h
 	defw	0000h, 0000h
 	defw	dirbf, dpblk1
@@ -88,13 +97,18 @@ dpbase:
 ;	disk parameter header for disk 02
 	defw	0000h, 0000h
 	defw	0000h, 0000h
-	defw	dirbf, dpblk2
+	defw	dirbf, dpblk3
 	defw	0000, all02
 ;	disk parameter header for disk 03
 	defw	0000h, 0000h
 	defw	0000h, 0000h
-	defw	dirbf, dpblk2
+	defw	dirbf, dpblk3
 	defw	0000, all03
+;	disk parameter header for disk 04
+;	defw	0000h, 0000h
+;	defw	0000h, 0000h
+;	defw	dirbf, dpblk2
+;	defw	0000, all04
 ;
 ;	sector translate vector
 trans:	
@@ -107,38 +121,38 @@ trans:
 	defm	15, 21			;sectors 25, 26
 ;
 dpblk1:	;disk parameter block for disks A & B 250KB - skew 6, 75 + 2 tracks = IBM SSSD 8" 3740.
-	defw	26		;sectors per track
-	defm	3		;block shift factor
-	defm	7		;block mask
-	defm	0		;null mask
-	defw	243		;disk size-1
-	defw	63		;directory max
-	defm	192		;alloc 0
-	defm	0		;alloc 1
-	defw	0		;check size
-	defw	2		;track offset
+	defw	26		; SPT sectors per track
+	defm	3		; BSH block shift factor
+	defm	7		; BLM block mask
+	defm	0		; EXM null mask
+	defw	243		; DSM disk size-1
+	defw	63		; DRM directory max
+	defm	192		; ALV alloc 0			$c0 = %11000000 = ((dir max * 32) / block size) = 2 bits
+	defm	0		; ALV alloc 1			$00 = %00000000
+	defw	0		; CKS check size
+	defw	2		; OFF track offset
 ;
-dpblk2:	;disk parameter block for 8MB - 1024 tracks
-	defw	64		;sectors per track
-	defm	4		;block shift factor = block size of 2048 bytes
-	defm	15		;block mask
-	defm	0		;null mask
-	defw	4095	;disk size-1 (4096 * 2048)
-	defw	1023	;directory max
-	defm	255		;alloc 0
-	defm	255		;alloc 1
-	defw	0		;check size
-	defw	0		;track offset
+;dpblk2:	;disk parameter block for 8MB hdd - 1024 tracks bs = 2K
+;	defw	64		;sectors per track
+;	defm	4		;block shift factor = block size of 2048 bytes
+;	defm	15		;block mask
+;	defm	0		;null mask
+;	defw	4095	;disk size-1 (4096 * 2048)
+;	defw	1023	;directory max
+;	defm	255		;alloc 0			$ff = %11111111 = ((dir max * 32) / block size) = 16 bits
+;	defm	255		;alloc 1			$ff = %11111111
+;	defw	0		;check size
+;	defw	0		;track offset
 ;
-dpblk3:	;disk parameter block for 8MB - 1024 tracks
+dpblk3:	;disk parameter block for 8MB hdd - 1024 tracks bs = 4K
 	defw	64		;sectors per track
 	defm	5		;block shift factor = block size of 4096 bytes
 	defm	31		;block mask
 	defm	1		;extent mask
 	defw	2047	;disk size-1 (in blocks = 2048 * 4096)
 	defw	1023	;directory max
-	defm	255		;alloc 0
-	defm	0		;alloc 1
+	defm	255		;alloc 0			$ff = %11111111 = ((dir max * 32) / block size) = 8 bits
+	defm	0		;alloc 1			$00 = %00000000
 	defw	0		;check size
 	defw	0		;track offset
 ;
@@ -159,13 +173,13 @@ boot_real:
 	ld hl, signon
 	call PRINT_STR
 
-	ld hl, cpm2_driveA		; starting disk image filename = "/A.DSK"
+	ld hl, cpm2_driveA		; starting disk image file name = "/A.DSK"
 	ld de, cpm_driveX
-	ld bc, 7
-	ldir					; make a copy of the disk image filename
+	ld bc, 7				; length of disk image file name + 1
+	ldir					; make a copy of the disk image file name
 
-	xor	a		     		; zero in the accum
-	ld (iobyte), a			; clear the iobyte
+	ld a, 93h
+	ld (iobyte), a			; set the iobyte
 	ld a, 1					; setting drive to 1 (B:) triggers initialise
 	ld (cdisk), a			; 
 	ld (cdrive), a
@@ -173,10 +187,8 @@ boot_real:
 ;
 wboot:
 	ld	sp, $80				; use space below buffer for stack
-	;ld a, (cdisk)
 	ld a, (cdrive)
 	ld c, a					; select previous disk
-	;ld 	c, 0				; select disk 0
 	call seldsk
 	call home	    		; go to track 0
 ;
@@ -186,7 +198,6 @@ wboot:
 	in a, (UAMCR)
 	and %11110111
 	out (UAMCR), a			; enable ROM
-	;ld a, ROM_ENABLE
 							; this address needs to match main.asm CBIOS load point in ROM
 	ld hl, $1000			; copy ROM CCP to RAM
 	ld de, ccp
@@ -196,7 +207,6 @@ wboot:
 	in a, (UAMCR)
 	or %00001000
 	out (UAMCR), a			; disable ROM
-	;ld a, ROM_DISABLE
 ;
 
 gocpm:
@@ -209,12 +219,11 @@ gocpm:
 	ld	hl, bdos			; bdos entry point
 	ld	(6), hl				; address field of Jump at 5 to bdos
 ;
-	ld	bc, $80				; default dma address is 80h
+	ld	bc, $80				; default dma address is 0080h
 	call setdma
 ;
 							; as this is only used at a cold boot, we are always using drive A
-	;ld	a, (cdisk)			; get current disk number
-    ld 	c, 0;a				; send to the ccp
+    ld 	c, 0				; send to the ccp
 	jp	ccp		     		; go to cp/m for further processing
 ;
 ;
@@ -278,37 +287,35 @@ reader:	; read character into register a from reader device
 ;
 home:	; move to track 0 of current drive
         ; translate this call into a settrk call with Parameter 00
-	LD     bc, 0			; select track 0
+	ld     bc, 0			; select track 0
 	call   settrk
-	;ld	   bc, 1
-	;call   setsec
-	ret			    		; we will move to 00 on first read/write
+	ret			    		; we will move to 0 on first read/write
 ;
 ;
 seldsk:	;select drive given by register c	
 	ld hl, 0000h			; error return code
 	ld a, c
-	cp disks				; must be between 0 and 3
-	ret nc					; no carry if >= 4
+	cp disks				; must be between 0 and 'disks'
+	ret nc					; no carry if >= 'disks'
 
 	; optimise by checking current drive against wanted drive
-	ld a, (cdrive)
+	;ld a, (cdrive)
 	;ld a, (cdisk)
-	cp c
-	jp z, seldsk_optimise	; current and wanted drives are the same so no need to perform the following
+	;cp c
+	;jp z, seldsk_optimise	; current and wanted drives are the same so no need to perform the following
 	
 	ld a, c
 	ld (cdisk), a			; selected disk is valid, so save it
 	ld (cdrive), a
 
 	ld hl, cpm_driveX
-	add a, 'A'				; add real disk number to filename (eg. /A.DSK becomes /B.DSK)
+	add a, 'A'				; add real disk number to filename (eg. disk 0 = /A.DSK)
 	inc hl
 	ld (hl), a				; ammend current disk image filename	
 
 ;	disk number is in the proper range
 ;	compute proper disk parameter header (DPH) address
-	ld 	l, c				; L = disk number 0, 1, 2, 3
+	ld 	l, c				; L = disk number 0, 1, 2, 3, 4
 	ld 	h, 0				; high order zero
 	add	hl, hl				; *2
 	add	hl, hl				; *4
@@ -336,6 +343,12 @@ seldsk:	;select drive given by register c
 
 	ld hl, cpm_driveX
 	call open_file			; open selected disks disk image
+	jp z, seldsk_optimise
+
+	ld hl, str_dir_fail3
+	call PRINT_STR
+	ld hl, 0000h
+	ret
 
 seldsk_optimise:
 	ld hl, (cdph)					
@@ -360,16 +373,29 @@ setsec:	;set sector given by registers bc
 sectran:
 	;translate the sector given by bc using the
 	;translate table given by de
-	EX DE, HL				; hl=.trans
-	ADD	HL, BC				; hl=.trans (sector)
+	;EX DE, HL				; hl=.trans
+	;ADD	HL, BC				; hl=.trans (sector)
 
-	ld a, (cdisk)
-	cp 2
-	ret nc					; only the first two drives use skew in this CP/M implementation
+	;ld a, (cdisk)
+	;cp 2
+	;ret nc					; only the first two drives use skew in this CP/M implementation
 	
-	LD l, (hl)				; l=trans (sector)
-	LD h, 0					; hl=trans (sector)	
-	ret			    		; with value in hl
+	;LD l, (hl)				; l=trans (sector)
+	;LD h, 0					; hl=trans (sector)	
+	;ret			    		; with value in hl
+
+	ld l, c
+	ld h, b
+	ld a, d
+	or e
+	ret z					; DE = 0, so no translation, HL = BC
+
+	ex de, hl
+	add hl, bc
+	ld l, (hl)
+	ld h, 0
+
+	ret
 ;
 ;
 setdma:	;setdma address given by registers b and c
@@ -379,14 +405,18 @@ setdma:	;setdma address given by registers b and c
 	ret
 ;
 ; Read one CP/M sector from disk.
-; Return a 00h in register a if the operation completes properly, and 0lh if an error occurs during the read.
-;
+; Return a 0 in A if the operation completes properly, and 1 if a read error occurs.
 ;
 read:
+	;ld a, (cdisk)
+	;ld c, a
+	;call seldsk				; if we don't do this, get seek errors on same drive writes
 	call drive_seek			; calculate disk image file offset
-	call read_from_file		; read 128 bytes
-	cp 0
 	jr nz, read_fail
+
+	call read_from_file		; read 128 bytes
+	;cp 0
+	;jr nz, read_fail
 
 	ld a, 0
 	ret
@@ -433,57 +463,76 @@ drive_seek:
 	; use DE to shift in to
 	; rotate left 7 (multiply by 128)
 	; DE = high 16bits, HL = low 16bits
-	ld d, 0
-	ld e, h					; copy H to E
-	srl e					; shift right once
+	;ld d, 0
+	;ld e, h					; copy H to E
+	;srl e					; shift right once
 
-	ld a, h
-	rrc a
-	and $80
-	ld b, a
-	ld a, l
-	srl a
-	or b
-	ld b, a
+	;ld a, h
+	;rrc a
+	;and $80
+	;ld b, a
+	;ld a, l
+	;srl a
+	;or b
+	;ld b, a
 
-	ld a, l
-	rrc a
-	and $80
-	ld l, a
-	ld h, b
+	;ld a, l
+	;rrc a
+	;and $80
+	;ld l, a
+	;ld h, b
+
+	ld bc, 128
+	ld d, h
+	ld e, l
+	call DE_Times_BC
 	
 _seek:
 	call move_to_file_pointer ; altered to use dehl
 	cp USB_INT_SUCCESS
-	ret z
+	ret z					; zero flag set for okay
 
+if DEBUG
+	push af
 	ld hl, str_seek_fail
 	call PRINT_STR
+	pop af
+	push af
+	call PRINT_HEX
+	call PRINT_NEWLINE
+	pop af
+
+endif
+	ld a, 1					; clear zero flag
 	ret
 ; end drive_seek
 str_seek_fail:
-	db "Seek failed \r\n", 0
-str_ds_debug:
-	db "\r\n32bit seek offset\r\n", 0
+	db "BIOS: Seek error ", 0
+
 
 ; Write one CP/M record to disk.
-; Return a 00h in register a if the operation completes properly, and 0lh if an error occurs during the write.
+; Return a 0 in A if the operation completes properly, and 1 if a write error occurs.
 ;
 write:
+	;ld a, (cdisk)
+	;ld c, a
 	call drive_seek			; calculate disk image file offset
-	call write_to_file		; write 128 bytes
-	cp 0
 	jr nz, write_fail
+
+	call write_to_file		; write 128 bytes
+	;cp 0
+	;jr nz, write_fail
 
 	ld a, 0
 	ret
+
 write_fail:
 	ld a, 1
     ret
 ;
 ;
-msh:
-monitor_jump:
+;msh:
+;monitor_jump:
 	;ld a, ROM_ENABLE
 	;out (ROM_CNTL), a
 	;call rom_on
@@ -534,16 +583,38 @@ str_dir_fail3: 	db "Failed to open disk image ",0
 ;			 db " mounted\r\n", 0
 NewLine:		db $0d, $0a, 0
 signon:
-				db 27,'[2J'                     ; clear screen
-    			db 27,'[H'                      ; cursor home
-    			db 27,'[0m'                     ; clear attributes
-    			db 27,'[?25h'                   ; Show cursor   
+				db 27, '[2J'                    ; clear screen
+    			db 27, '[H'                     ; cursor home
+    			db 27, '[0m'                    ; clear attributes
+    			db 27, '[?25h'                  ; Show cursor   
 				db "Z80 Playground [8bitsack.co.uk]", 13, 10   
-    			db '64K CP/M v2.2 [CBIOS v1.0 for Z80 Playground]', 13, 10
+	;if CBIOS_LENGTH <= $600
+	;			db '64K CP/M v2.2 [CCP: $E400  BDOS: $EC00  BIOS: $FA00]', 13, 10
+	;else
+	;	if CBIOS_LENGTH <= $A00
+				db '63K CP/M v2.2 [CCP: $E000  BDOS: $E800  BIOS: $F600]', 13, 10
+	;	endif
+	;endif
 				db "CP/M Copyright Caldera Inc., 1996", 13, 10
-				db "CBIOS Steve Bradford, 2021", 13, 10
-    			;db 13, 10
-    			db 0
+				db "CBIOS v1.2 for Z80 Playground, Steve Bradford, 2022", 13, 10
+				;
+				; ref: Programmers CPM Handbook -figure 7-8
+				;
+				; BIOS 		BIOS 	DDT 	MOVCPM 	CCP 	BOOS 
+				; Length 	Base 	Offset 	'nn'	Base 	Base
+				;
+				; 600 		FAOO 	2580 	64 		E400	EC00
+				; AOO 		F600 	2980 	63 		E000	E800
+				; EOO 		F200 	2080 	62		DC00	E400
+				; 1200 		EEOO 	3180 	61 		D800	E000
+				; 1600 		EAOO 	3580 	60 		D400	DC00
+				; 1AOO 		E600 	3980 	59 		D000	D800
+				; 1EOO 		E200 	3080 	58 		CC00	D400
+				; 2200 		DEOO 	4180 	57 		C800	D000
+				; 2600 		DAOO 	4580 	56 		C400	CC00
+				; 						ETC.
+				;
+    			db 0							; end of string marker
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
 ; function PRINT_NEWLINE
@@ -571,7 +642,7 @@ PRINT_NEWLINE:
 ; entry:
 ;   A byte to print
 ; 
-PRINT_HEX:  ;PUSH    AF
+PRINT_HEX:  
             PUSH    AF
             RRCA                         
             RRCA 
@@ -587,7 +658,6 @@ PASS1:      AND     $0F
 NUM:
             CALL    PRINT_CHAR
 
-            ;POP     AF
             RET
 ; function end
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -621,12 +691,12 @@ PRINT_CHAR: PUSH    AF
             ;CP      $7E                 
             ;RET     C                  	; A > $7e
 
-.loop1:     IN      A,(UALSR)           ; read Line Status Register           
-            BIT     5,A                 ; bit set when Transmit Holding register and shift register have emptied
-            JP      Z,.loop1            ; loop until ready
+.loop1:     IN      A, (UALSR)          ; read Line Status Register           
+            BIT     5, A                ; bit set when Transmit Holding register and shift register have emptied
+            JP      Z, .loop1           ; loop until ready
             POP     AF
             
-            OUT     (UATX),A            ; write character to UART
+            OUT     (UATX), A           ; write character to UART
 
             RET
 ; function end
@@ -721,6 +791,7 @@ endif
 ;	system	memory image (the space must be available,
 ;	however, between"begdat" and"enddat").
 ;
+begdat:	equ	$	 			; beginning of data area
 ;prev_sector:
 ;		defs	2
 track:	defs	2			; two bytes for expansion
@@ -732,18 +803,20 @@ cdph:	defs	2			; current disks dph address
 cspt:	defs	2			; current disks sector per track
 ;
 ;	scratch ram area for bdos use
-;begdat:	equ	$	 			; beginning of data area
+
 dirbf:	defs	128	 		; scratch directory area
 all00:	defs	31	 		; allocation vector 0
-all01:	defs	31	 		; allocation vector 1
-all02:	defs	255	 		; allocation vector 2
-all03:	defs	255	 		; allocation vector 3
+all01:	defs	31	 		; allocation vector 1		one bit per block (disk size = 244 / 8 = 31 bytes)
+all02:	defs	256	 		; allocation vector 2		one bit per block (disk size = 2048 / 8 = 256 bytes)
+all03:	defs	256	 		; allocation vector 3		one bit per block (disk size = 2048 / 8 = 256 bytes)
+;all04:	defs	255	 		; allocation vector 4
 ;chk00:	defs	16			; check vector 0
 ;chk01:	defs	16			; check vector 1
 ;chk02:	defs	16	 		; check vector 2
 ;chk03:	defs	16	 		; check vector 3
 ;
-;enddat:	equ	$	 			; end of data area
-;datsiz:	equ	$-begdat;		; size of data area
+enddat:	equ	$	 			; end of data area
+datsiz:	equ	$-begdat;		; size of data area
 CBIOS_LENGTH: equ $-CBIOS_START
+
 	end

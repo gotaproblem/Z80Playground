@@ -52,8 +52,11 @@ INIT_HW:    DI                          ; Disable interrupts
 
 PAUSE:                                  ; allow UART to settle after a reset
             LD     B, 50                ; approximately 50ms
-PAUSELOOP1: LD     A, 196               ; 10 MHz clock ~ 1ms
-PAUSELOOP2: NOP                         ; loop cycles 51
+PAUSELOOP1: LD     A, 200               ; 10 MHz clock ~ 1ms
+PAUSELOOP2: NOP                         ; loop cycles 50 @ 100ns = 5us
+            NOP
+            NOP
+            NOP
             NOP
             NOP
             NOP
@@ -62,7 +65,8 @@ PAUSELOOP2: NOP                         ; loop cycles 51
             DEC    A   
             JP     NZ, PAUSELOOP2
 
-            DJNZ   PAUSELOOP1
+            DJNZ   PAUSELOOP1           ; +13 cycles = 1.3us
+            
 COPY_ROM:
             LD      HL, $0000           ; copy ROM to RAM
             LD      DE, $0000
@@ -85,8 +89,13 @@ MAIN:
             CALL    INIT_UART           ; have to re-initialise the UART after a rst
             CALL    CLS
             CALL    PRINT_NEWLINE
+
+            LD      HL, SignOn
+            CALL    PRINT_STR           ; display sign on message
+
             LD      HL, RomState
             CALL    PRINT_STR
+
             LD      A, (V_ROMSTATE)
             CP      ROM_ENABLE
             JR      NZ, ROMisDisabled
@@ -94,15 +103,16 @@ MAIN:
             CALL    rom_on
             LD      HL, Enabled
             CALL    PRINT_STR
+
             JR      CONT      
 
 ROMisDisabled:
             CALL    rom_off
             LD      HL, Disabled
             CALL    PRINT_STR
+            
 CONT:       CALL    PRINT_NEWLINE
-            LD      HL, SignOn
-            CALL    PRINT_STR           ; display sign on message
+            
             CALL    MONITOR 
 
             RST     $00                 ; don't expect to get here, but just in case, cold boot
@@ -120,7 +130,4 @@ CBIOS_BIN:
 CBIOS_LENGTH equ $-CBIOS_BIN
 ;
 ;
-            ;print CPM_LENGTH
-            ;print CBIOS_LENGTH
-PROGRAMME_END:
             END

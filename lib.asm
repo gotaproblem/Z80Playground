@@ -235,12 +235,13 @@ PRINT_NEWLINE:
 ;   none
 ;
 rom_off:    
+            ld a, ROM_DISABLE
+            ld (V_ROMSTATE), a             ; save ROM enabled/disabled state
+
             ; rom LED off + disable ROM
 	        in a, (UAMCR)
 	        or %00001000
 	        out (UAMCR), a
-            ld a, ROM_DISABLE
-            ld (V_ROMSTATE), a             ; save ROM enabled/disabled state
             
             ret
 ; function end

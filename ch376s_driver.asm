@@ -18,58 +18,60 @@
 
 ;--- CH376 port to Z80 ports mapping
 
-CH_DATA_PORT: equ $10
-CH_COMMAND_PORT: equ $11    
+CH_DATA_PORT:           equ $10
+CH_COMMAND_PORT:        equ $11    
 
 
 ;--- Commands
-
-CH_CMD_RESET_ALL: equ 05h
-CH_CMD_CHECK_EXIST: equ 06h
-CH_CMD_SET_RETRY: equ 0Bh
-CH_CMD_DELAY_100US: equ 0Fh
-CH_CMD_SET_USB_ADDR: equ 13h
-CH_CMD_SET_USB_MODE: equ 15h
-CH_CMD_TEST_CONNECT: equ 16h
-CH_CMD_ABORT_NAK: equ 17h
-CH_CMD_GET_STATUS: equ 22h
-CH_CMD_RD_USB_DATA0: equ 27h
-CH_CMD_WR_HOST_DATA: equ 2Ch
-CH_CMD_WR_REQ_DATA: equ 2Dh
-
-
-CH_CMD_SET_FILE_NAME: equ $2f
-CH_CMD_DISK_CONNECT: equ $30
-CH_CMD_DISK_MOUNT: equ $31
-CH_CMD_FILE_OPEN: equ $32
-CH_CMD_FILE_CREATE: equ $34
-CH_CMD_FILE_ERASE: equ $35
-CH_CMD_FILE_CLOSE: equ $36
-CH_CMD_BYTE_LOCATE: equ $39
-CH_CMD_BYTE_READ: equ $3a
-CH_CMD_BYTE_RD_GO: equ $3b
-CH_CMD_BYTE_WRITE: equ $3c
-CH_CMD_BYTE_WR_GO: equ $3d
-CH_CMD_DISK_CAPACITY: equ $3e
-CH_CMD_DISK_QUERY: equ $3f
-
+CH_CMD_RESET_ALL:       equ 05h
+CH_CMD_CHECK_EXIST:     equ 06h
+CH_CMD_SET_RETRY:       equ 0Bh
+CH_CMD_GET_FILE_SIZE    equ 0Ch
+CH_CMD_DELAY_100US:     equ 0Fh
+CH_CMD_SET_USB_ADDR:    equ 13h
+CH_CMD_SET_USB_MODE:    equ 15h
+CH_CMD_TEST_CONNECT:    equ 16h
+CH_CMD_ABORT_NAK:       equ 17h
+CH_CMD_GET_STATUS:      equ 22h
+CH_CMD_RD_USB_DATA0:    equ 27h
+CH_CMD_WR_HOST_DATA:    equ 2Ch
+CH_CMD_WR_REQ_DATA:     equ 2Dh
+CH_CMD_SET_FILE_NAME:   equ $2f
+CH_CMD_DISK_CONNECT:    equ $30
+CH_CMD_DISK_MOUNT:      equ $31
+CH_CMD_FILE_OPEN:       equ $32
+CH_CMD_FILE_ENUM_GO     equ 33h
+CH_CMD_FILE_CREATE:     equ $34
+CH_CMD_FILE_ERASE:      equ $35
+CH_CMD_FILE_CLOSE:      equ $36
+CH_CMD_BYTE_LOCATE:     equ $39
+CH_CMD_BYTE_READ:       equ $3a
+CH_CMD_BYTE_RD_GO:      equ $3b
+CH_CMD_BYTE_WRITE:      equ $3c
+CH_CMD_BYTE_WR_GO:      equ $3d
+CH_CMD_DISK_CAPACITY:   equ $3e
+CH_CMD_DISK_QUERY:      equ $3f
 
 ;--- Status codes
+CH_ST_INT_SUCCESS:      equ 14h
+CH_ST_INT_CONNECT:      equ 15h
+CH_ST_INT_DISCONNECT:   equ 16h
+CH_ST_INT_BUF_OVER:     equ 17h
+CH_ST_RET_SUCCESS:      equ 51h
+CH_ST_RET_ABORT:        equ 5Fh
 
-CH_ST_INT_SUCCESS: equ 14h
-CH_ST_INT_CONNECT: equ 15h
-CH_ST_INT_DISCONNECT: equ 16h
-CH_ST_INT_BUF_OVER: equ 17h
-CH_ST_RET_SUCCESS: equ 51h
-CH_ST_RET_ABORT: equ 5Fh
+
+USB_INT_SUCCESS:        equ $14
+USB_INT_CONNECT:        equ $15
+USB_INT_DISK_READ       equ $1D
+USB_INT_DISK_WRITE      equ $1E
+USB_INT_DISK_ERR        equ $1F
 
 
-USB_INT_SUCCESS: equ $14
-USB_INT_CONNECT: equ $15
-USB_INT_DISK_READ equ $1D
-USB_INT_DISK_WRITE equ $1E
-USB_INT_DISK_ERR equ $1F
 
+eos					equ		00h					; End of string
+cr					equ		0dh
+lf					equ		0ah
 
 ;
 ; build options
@@ -128,6 +130,7 @@ wait1:
 
     pop bc
     ret
+
 wait2:
     ld bc, 1
     call hw_pause           ; wait 10us
@@ -137,12 +140,9 @@ wait2:
     or c
     jr nz, wait1
 
-    ;push hl                 ; save hl for calling code
-    ;ld hl, str_timeout
-    ;call PRINT_STR
-    ;pop hl
     call wait               ; try again
     ret
+
 ch376_fault:
     push hl
     ld hl, str_faulted
@@ -150,8 +150,8 @@ ch376_fault:
     pop hl
     pop bc
     ret
-str_timeout: db "[USB TIMEOUT]\r\n", 0
-str_faulted: db "[CH376S FAULTED]\r\n", 0
+
+str_faulted: db "[CH376S FAULTED]", cr, lf, eos
 ;-----------------------------------------------------------------
 
 
@@ -281,64 +281,15 @@ ch376s_mode_failed:
     ret
 
 str_mode_failed:
-    db "[ERROR: No USB Disk?]\r\n", 0
+    db "[ERROR: No USB Disk?]\r\n", cr, lf, eos
 str_check_failed:
-    db "[CH376S MODULE NOT FOUND]\r\n", 0
+    db "[CH376S MODULE NOT FOUND]\r\n", cr, lf, eos
 str_connect_failed:
-    db "[ERROR connecting to USB Disk]\r\n", 0
+    db "[ERROR connecting to USB Disk]\r\n", cr, lf, eos
 str_mount_failed:
-    db 'ERROR mounting USB Disk\r\n', 0
+    db "ERROR mounting USB Disk", cr, lf, eos
 
 ;-----------------------------------------------------------------
-
-
-    
-
-
-
-
-
-DISK_CAPACITY:
-;    ld a, CH_CMD_DISK_CAPACITY
-;    out (CH_COMMAND_PORT), a
-
-;    call CH_GET_STATUS
-;    cp CH_ST_INT_SUCCESS
-;    jr nz, _DISK_CAPACITY_FAIL
-
-    ; read capacity
-;    ld c, 4
-;    ld hl, $8030        ; temporary buffer in RAM
-;    call CH_READ_DATA
-
-    ld a, 0
-    ret
-
-;_DISK_CAPACITY_FAIL:
-;    ld a, 255
-;    ret
-
-
-DISK_QUERY:
-;    ld a, CH_CMD_DISK_QUERY
-;    out (CH_COMMAND_PORT), a
-
-;    call CH_GET_STATUS
-;    cp CH_ST_INT_SUCCESS
-;    jr nz, _DISK_QUERY_FAIL
-
-    ; read size
-;    ld c, 4
-;    ld hl, $8040        ; temporary buffer in RAM
-;    call CH_READ_DATA
-
-    ld a, 0
-    ret
-
-;_DISK_QUERY_FAIL:
-;    ld a, 255
-;    ret
-
 
 
 
@@ -371,27 +322,53 @@ open_file:
     ret
 
 
+; DE = pointer to filename
+create_file:
+    push de
+    ld a, CH_CMD_SET_FILE_NAME
+    call send_command
+    pop hl
+    call send_data_string
+    ld a, CH_CMD_FILE_CREATE
+    call send_command
+    call read_status
+    cp USB_INT_SUCCESS
+
+    ret
+
+
+; DE = pointer to filename
+delete_file:
+    push de
+    ld a, CH_CMD_SET_FILE_NAME
+    call send_command
+    pop hl
+    call send_data_string
+    ld a, CH_CMD_FILE_ERASE
+    call send_command
+    call read_status
+    cp USB_INT_SUCCESS
+
+    ret
+
 ;
 ; read 128 bytes from the current file into buffer address pointed to in HL
 ;
 read_from_file:
-    ld hl, (dmaad)
     ld a, CH_CMD_BYTE_READ
     call send_command
-    ld a, 128               ; Request 128 bytes
+    ld a, 128               ; Request 128 bytes (one CP/M sector)
     call send_data
     ld a, 0
     call send_data
     call read_status
-
-read_from_file1:
-    cp USB_INT_DISK_READ    ; This means "go ahead and read"
+    cp USB_INT_DISK_READ    ; go ahead and read
     jr z, read_from_file3
 
     cp USB_INT_SUCCESS      ; this means we are finished
-    jp z, read_done
+    jp z, read_eof
 
-    ld a, 1                 ; return error condition
+    ld a, 1                 ; else return error condition
     ret
 
 read_from_file3:
@@ -400,6 +377,7 @@ read_from_file3:
     call read_data          ; A tells us
     
                             ; quickest way to get the data
+    ld hl, (dmaad)
     ld b, a
     ld c, CH_DATA_PORT
     inir                    ; IO loop - data is written to buffer pointed to in HL
@@ -407,18 +385,17 @@ read_from_file3:
     ld a, CH_CMD_BYTE_RD_GO
     call send_command
     call read_status
-    ;ld a, CH_CMD_GET_STATUS
-    ;call send_command
-    ;call read_data
+    cp a
+    ret
 
-read_done:    
-    ld a, 0
+read_eof:    
+    ld a, USB_INT_SUCCESS+1
     ret                     ; return good status
 
 
 ;
 ; Set the BYTE_LOCATE file position in the currently open file.
-; Value is passed in dehl, hl = low word, de = high word
+; Value is passed in DEHL, DE = high word, HL = low word
 move_to_file_pointer:
     ld a, CH_CMD_BYTE_LOCATE
     call send_command
@@ -431,23 +408,128 @@ move_to_file_pointer:
     ld a, d
     call send_data
     call read_status
-    cp USB_INT_SUCCESS
-    jr nz, move_to_file_pointer_fail
+                   
+    ret 
 
-    ld a, USB_INT_SUCCESS                   
-    ret                     ; return success
-move_to_file_pointer_fail:
-    ld a, USB_INT_DISK_ERR                  
-    ret                     ; return fail
-
-    
-
+if OLDWR
+wrbytes: db 0
 ;----------------------------------
+; CP/M WRITE TO FILE
+; writes 128 bytes from current location pointed to by HL, to the open file
+write_to_file:   
+    ld a, 128
+    ld (wrbytes), a
+
+write_start:
+    ld a, CH_CMD_BYTE_WRITE
+    call send_command
+
+    ; Send number of bytes we are about to write, as 16 bit number, low first
+    ;ld a, 128
+    ;ld hl, wrbytes
+    ld a, (wrbytes)
+    call send_data
+    ld a, 0
+    call send_data
+
+;write_loop
+    call read_status
+    cp USB_INT_SUCCESS
+    jr z, write_finished    ; all done
+
+    cp USB_INT_DISK_WRITE
+    jr z, write_loop
+
+    jp write_error          ; error
+
+write_loop:
+    ; Ask if we can send some bytes
+    ld a, CH_CMD_WR_REQ_DATA
+    call send_command
+    call read_data          ; returns allowed byte count
+    ;cp 128
+    ;jp nz, write_partial
+    push af
+    ld hl, str_want
+    call PRINT_STR
+    ld a, (wrbytes)
+    call PRINT_HEX
+    call PRINT_NEWLINE
+
+    ld hl, str_write_partial
+    call PRINT_STR
+    pop af
+    push af
+    call PRINT_HEX
+    call PRINT_NEWLINE
+
+    pop af
+    ld b, a                 ; should be 128
+    ld c, CH_DATA_PORT
+    ld hl, (dmaad)
+    otir
+
+    ld b, a                 ; bytes sent
+    ld a, (wrbytes)
+    sub b                   ; did all go?
+    ld (wrbytes), a
+    cp 0
+    jp z, write_completed
+
+    jp write_start
+
+write_completed:
+    ld a, CH_CMD_BYTE_WR_GO
+    call send_command       ; finish write operation
+    call close_file         ; close FAT file
+
+write_finished:
+    ld a, 0
+    ret
+
+write_partial:
+    push af
+    ld hl, str_write_partial
+    call PRINT_STR
+    pop af
+    call PRINT_HEX
+    call PRINT_NEWLINE
+
+    ld a, 0
+    ret
+
+write_error:
+    push af
+    ld hl, str_write_error
+    call PRINT_STR
+    pop af
+    call PRINT_HEX
+    call PRINT_NEWLINE
+
+    ld a, 1
+    ret
+
+str_write_error:
+    db "Write error $"
+str_write_partial:
+    db "Got $"
+str_want:
+    db "Want $"
+endif
+
+
+
+
+
+
+
+
+; ----------------------------------
 ; CP/M WRITE TO FILE
 ; writes 128 bytes from current location pointed to by HL, to the open file
 write_to_file:
     ld hl, (dmaad)
-    ;push hl
+    push hl
     ld a, CH_CMD_BYTE_WRITE
     call send_command
 
@@ -457,50 +539,54 @@ write_to_file:
     ld a, 0
     call send_data
 
-    ;pop hl                              ; hl -> the data
+    pop hl                              ; hl -> the data
 
 write_loop
     call read_status
     cp USB_INT_DISK_WRITE
     jr nz, write_finished
 
-    ;push hl
+    push hl
     ; Ask if we can send some bytes
     ld a, CH_CMD_WR_REQ_DATA
     call send_command
     call read_data
-    ;pop hl
+    pop hl
     cp 0
     jr z, write_finished
 
     ld b, a
 block_loop:
     ld a, (hl)
-    ;push hl
+    push hl
     push bc
     call send_data
     pop bc
-    ;pop hl
+    pop hl
     inc hl
     djnz block_loop
 
-    ;push hl
+    push hl
     ld a, CH_CMD_BYTE_WR_GO
     call send_command
-    ;pop hl
+    pop hl
     jp write_loop
 
 write_finished:
-    ld a,0
     ret
+
+
+
+
+
 
 
 close_file:
     ld a, CH_CMD_FILE_CLOSE
     call send_command
-    ld a, 0                 ; 1 = update file size if necessary
+    ld a, 1 ;0                 ; 1 = update FAT file size if necessary
     call send_data
-    call read_status
+    ;call read_status
     ret
 
 

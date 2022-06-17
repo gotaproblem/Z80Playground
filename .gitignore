@@ -5,7 +5,6 @@
 /format.bin
 /main.bin
 /tests.asm
-/USB Drive Disk Images
 /xr.bin
 /xs.bin
 /CPM3
@@ -14,3 +13,5 @@
 /*.bin
 /.DS_Store
 
+Tools/8ptfer copy.asm
+ch376s_driver copy.asm

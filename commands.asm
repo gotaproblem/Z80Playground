@@ -19,7 +19,7 @@ str_commands:	DB		" Available Commands are: ", CR, LF
 				DB		"    load - load data to address", CR, LF
                 DB		"    rom - enable/disable ROM", CR, LF
 				DB		"    cpm2 - load CP/M v2.2 Operating System", CR, LF
-				DB		"    cpm3 - load CP/M Plus Operating System", CR, LF
+				DB		"    cpm3 - load CP/M v3.1 Operating System", CR, LF
 				DB		"    test - check Hardware", CR, LF
 				DB		"    halt - halt CPU", CR, LF
 				DB		"    toggle - toggle User LED1", CR, LF
@@ -469,9 +469,9 @@ cmd_cpm2:
 	ldir
 
 	; run CP/M
-	call rom_off						; disable ROM - LED state shows CP/M is loaded in to memory
+	call rom_off							; disable ROM - LED state shows CP/M is loaded in to memory
 
-	jp $f600 ;$f200							; alter this if CP/M and/or BIOS changes
+	jp 0f600h ;$f200						; alter this if CP/M and/or BIOS changes
 
 ;cmd_cpm_end:
 ;	ret
@@ -496,7 +496,9 @@ bdos_base:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; cmd_cpm3 - load CP/M Plus	
 ; 
-; read boot disk (A:) track 1 sector 2 thru track 2 sector 26, and write contents to RAM $0100
+; read boot disk (A:) track 0 sector 2 thru track 1 sector 26
+; write contents to RAM $0100
+; NOTE first two tracks (0 and 1) do not use a skew
 cmd_cpm3:
 	ld hl, str_cpm3_msg1
 	call PRINT_STR
@@ -507,19 +509,21 @@ cmd_cpm3:
 	call open_file
 	jp nz, cmd_cpm3_open_failed
 
-	ld bc, 25+26                        ; remainder of track 0 sectors + all of track 1
-    ld hl, $0001
-    ld (sector), hl
-    ld hl, $0100                        ; writing data to TPA
-    ld (dmaad), hl
+
+	ld b, 25+26                         ; remainder of track 0 sectors + all of track 1
+    ld hl, 100h                         ; writing data to TPA
+    ld (dmaad), hl 
+	ld hl, 1
+    ld (sector), hl						; skip first sector
 ldrloop:
     push bc								; save loop count
+
     call seek							; seek to file position
-    call read_from_file					; read 128 bytes (one sector) and write directly to TPA
+    call read_from_file					; read 128 bytes (one sector) and write to dma buffer
 	cp 0
 	jp nz, ldr_read_failed				; read failed
 
-    ld hl, (dmaad)						; 
+    ld hl, (dmaad)				
     ld de, 128
     add hl, de
     ld (dmaad), hl                      ; add 128 bytes to dma buffer (TPA)
@@ -528,36 +532,28 @@ ldrloop:
     ld (sector), hl						; increment sector count for seek
     pop bc
     djnz ldrloop                        ; next sector
+	
+	; copy 'disable' code to disable ROM in to RAM
+	ld hl, bootmesrc
+	ld de, bootme
+	ld bc, bootmeend-bootmesrc			; size of code in bytes
+	ldir								; copy instructions to RAM
 
-    jp $0100                            ; pass to CPMLDR.COM 
+	jp bootme							; execute ROM disable and jump to CP/M 3 loader
+	
+bootme 		equ 8004h					
+bootmesrc 	equ $
+			db 	0dbh, 0ch				; IN   A, (12)
+			db 	0f6h, 08h				; OR   %00001000
+			db 	0d3h, 0ch				; OUT  (12), A
+			db 	0c3h, 00h, 01h			; JP   0100h
+bootmeend	equ $	
 
 ldr_read_failed:
     pop bc                              ; sync stack
     ld hl, str_cpm3_read_failed
     call PRINT_STR
     halt
-
-;str_ldr_read_failed:
-;    db "Cold Boot Loader - Read failed\r\n", 0
-
-;	jp $0080							; load T:0 S:2 thru T:1 S:26 at most
-
-
-	; CP/M 3, has a four stage boot process before you get to the command prompt. 
-	;
-	; 1. the system ROM loads the first sector of the first track of the disk storage and executes it. 
-	; This loads in a small program called CPMLDR.COM from the first track and executes it. 
-	; 
-	; 2. CPMLDR.COM contains a minimal implementation of CP/M Plus and a BIOS. 
-	; This loads the file CPM3.SYS off the file system to the correct location in memory and executes it. 
-	;
-	; 3. The system is then initialized by CPM3.SYS, vectors set and so on.
-	;
-	; 4. CCP.COM is loaded into the program area and executed, giving you the command prompt. 
-	;
-	; It is done this way so the operating system code is in a file, not on the boot track, 
-	; which makes the task of updating or patching it a little easier.
-
 
 
 
@@ -570,7 +566,7 @@ cmd_cpm3_read_failed:
 	ret
 
 str_cpm3_read_failed:
-	db "Cold Boot Loader - Read failed\r\n\0"
+	db "CP/M 3 Cold Boot Loader: Read failed", CR, LF, EOS
 
 cmd_cpm3_open_failed:
 	ld hl, str_cpm3_open_failed
@@ -578,22 +574,25 @@ cmd_cpm3_open_failed:
 	ret
 
 str_cpm3_open_failed:
-	db "Cold Boot Loader - Open CPM3.DSK failed\r\n\0"
+	db "CP/M 3 Cold Boot Loader: Open /CPM3.DSK failed", CR, LF, EOS
 
 str_cpm3_msg1: 	
-	db "Configure CH376 module...\r\n\0"
-
-dmaad dw 1								; needed for ch376s driver
-sector dw 1
+	db "Configure CH376 module...", CR, LF, EOS
 
 
 ;
 ; function seek
 ;
 seek:	
-	ld de, (sector)
-	ld bc, 128							; de * 128
-	call DE_Times_BC					; result in dehl
+	ld de, 0
+	ld hl, (sector)						; for this loader, sectors are consecutive up to sector 51
+	add hl, hl							; * 2
+	add hl, hl							; * 4
+	add hl, hl							; * 8
+	add hl, hl							; * 16
+	add hl, hl							; * 32
+	add hl, hl							; * 64
+	add hl, hl							; * 128
 
 _seek:
 	call move_to_file_pointer 			; altered to use dehl
@@ -606,6 +605,9 @@ _seek:
 ; end drive_seek
 
 str_seek_fail:
-	db "Cold Boot Loader - Seek failed \r\n", 0
+	db "Cold Boot Loader - Seek failed ", CR, LF, EOS
 
-
+; IMPORTANT
+; r/w variables can not be in ROM space
+dmaad 	equ 8000h								; needed for ch376s driver
+sector 	equ 8002h
