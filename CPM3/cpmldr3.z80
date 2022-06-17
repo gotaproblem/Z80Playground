@@ -1,0 +1,380 @@
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/09/2021                                           *
+; *                                                      *
+; * CP/M 3 (Plus)                                        *
+; *                                                      *
+; * CPMLDR3.COM                                          *
+; *   Load CPM3.SYS from CP/M 2.2                        *
+; *   CPM3.SYS has to reside on the same disk as the     *
+; *   loader.                                            *
+; ********************************************************
+;
+; if loaded as a CP/M file, ie. via CP/M 2, then can use 
+; existing BIOS functions
+;
+DEBUG       DEFL    0       ; set to 1 for DEBUG code
+DEBUG_LOOP  DEFL    0       ; set to 1 for DEBUG code
+
+
+wboot:      equ $00
+bdos:       equ $05
+fcb:        equ $5c         ; default FCB address
+dmabuff:    equ $80         ; default buffer address
+
+; BDOS functions
+;BDOSwrstr:  equ 09          ; write string
+BDOSver:    equ 12          ; CP/M version
+BDOSfopen:  equ 15          ; open file
+BDOSfread:  equ 20          ; read record
+BDOSsetdma: equ 26          ; set dma address
+
+
+; programme start
+            org $0100       ; it's a CP/M programme
+main:
+        ld (cpmsp), sp
+        ld sp, tmpstack
+
+        ld hl, (wboot+1)    ; warm boot vector
+        ld (v_wboot), hl    ; save BIOS entry point address
+        ld de, 3*3	    ; conout is the 3rd vector
+        add hl, de
+        ld (v_conout), hl   ; save conout vector
+
+        ;
+        ; can not do any IO (BDOS calls etc.) until CP/M3.SYS has been loaded
+        ; to its final resting place
+        ;
+        ld hl, str_signon
+        call printStr
+
+        ; Read CP/M version
+        ld c, BDOSver       ; get CP/M version
+        call bdos           ; on return, H = system type L = version number
+        ld a, l             
+        cp 31h              ; expect <= $31 >= $20
+        ld hl, str_wrongCPM
+        ;jp nc, ferror       ; expecting CP/M 2
+
+        ;
+        ; open CPM3.SYS file
+        ;
+        ld c, BDOSfopen     ; open CPM3.SYS
+        ld de, cpmfcb
+        call bdos
+        cp 0ffh             ; checking for error
+        ld hl, str_openerr
+        jp z, ferror
+
+        ld de, dmabuff
+        ld c, BDOSsetdma
+        call bdos           ; set dma buffer
+
+        ld de, cpmfcb
+        ld c, BDOSfread     ; read first 128 bytes
+        call bdos
+        cp 0ffh             ; check for error
+        jp z, rderror
+
+;
+; CPM3.SYS File Format:
+;
+;	0	Header Record (128 bytes)
+;	1	Print Record (128 bytes)
+;	2-n	CP/M 3 operating System in reserved order, top down.
+;
+
+;
+; Header Record Definitions:
+;
+; CPM3SYS (see at the end) ; Begin of CPM3.SYS
+;
+;restop	equ	0	; Top page plus one, at which the resident partion
+;			; of CP/M 3 is to be loaded top down.
+;
+;reslen	equ	1	; Length in pages (256 bytes) of the resident
+;			; portion of CP/M 3.
+;
+;bnktop	equ	2	; Top page plus one, at wich the banked portion
+;			; of CP/M 3 is to be loaded top down.
+;
+;bnklen	equ	3	; Length in pages (256 bytes) of the banked
+;			; portion of CP/M 3.
+;
+;coldboot equ	4	; Address of CP/M 3 Cold Boot entry point
+;
+;copyrmsg equ	16	; Copyright Message
+        
+
+;
+;       read CPM3.SYS header record
+;
+        ld hl, dmabuff
+        ld a, (hl)
+        ld (toppage), a
+        inc hl
+        ld a, (hl)
+        ld (pages), a
+        inc hl
+        inc hl
+        inc hl
+        ld a, (hl)
+        ld (cpm3entry), a
+        inc hl
+        ld a, (hl)
+        ld (cpm3entry+1), a
+;
+;       read CPM3.SYS print record
+;
+        ld c, BDOSfread     ; read second 128 bytes
+        ld de, cpmfcb
+        call bdos           ; read display info
+        cp 0ffh
+        jp z, rderror
+
+        ld hl, dmabuff
+        call printStr       ; print CP/M 3 string
+;
+;       Main System Load
+;
+;       Load CPM3.SYS to TPA RAM space
+;       then relocate to correct space, thus overwriting CP/M 2
+; 
+        ld de, 1000h
+loop:   
+        push de             ; save DE = dma address
+        ld c, BDOSsetdma
+        call bdos
+
+        ld c, BDOSfread
+        ld de, cpmfcb
+        call bdos
+        pop de         
+        cp 0ffh             ; check for read error
+        jp z, rderror
+
+        cp 1                ; EOF
+        jp z, rdfinished
+
+        ld hl, 80h
+        add hl, de          ; HL = dma address + 80h
+        ex de, hl
+        jr loop
+
+rdfinished:
+        ; at this point CP/M 3 is loaded in to TPA address space 1000h to 3000h
+        ; now relocate - will overwrite CP/M 2.2, so no BIOS/BDOS calls during/after
+        ld a, (toppage)
+        ld d, a
+        ld e, 80h
+        dec d               ; DE = destination address = (toppage-1)
+        
+if DEBUG
+        ;push de
+        ;ld hl, str_copystart
+        ;call printStr
+        ;ld a, d
+        ;call PRINT_HEX
+        ;ld a, e
+        ;call PRINT_HEX
+        ;ld hl, str_newline
+        ;call printStr
+        ;pop de
+endif
+
+        ld hl, 1000h        ; HL = src address
+                            ; HL will increase by 256 for each iteration of memloop
+        ld a, (pages)
+        add a, a            ; double because we are handling 128 byte records
+        
+memloop:
+        
+        ld bc, 128          ; bytes to copy
+        ldir                ; do copy 1000h -> toppage - 1
+        dec d
+        
+if DEBUG_LOOP
+        push af
+        push hl
+        push de
+        ld hl, str_copystart
+        call printStr
+        ld a, d
+        call PRINT_HEX
+        ld a, e
+        call PRINT_HEX
+        ld hl, str_newline
+        call printStr
+        pop de
+        pop hl
+        pop af
+endif
+        dec a
+        jr nz, memloop
+
+if DEBUG 
+
+        ld hl, str_cpm3entry
+        call printStr
+        ld hl, (cpm3entry)
+        ld a, (hl)
+        call PRINT_HEX
+        inc hl
+        ld a, (hl)
+        call PRINT_HEX
+        inc hl
+        ld a, (hl)
+        call PRINT_HEX
+        ld hl, str_newline
+        call printStr
+endif
+
+        ld hl, (cpm3entry)
+        jp (hl)             ; pass control to CP/M3 BIOS
+
+       
+
+rderror:        
+        ld hl, str_readerr
+        call printStr
+        jp exit
+
+ferror:
+        call printStr
+
+
+exit:
+        ld sp, (cpmsp)
+        jp wboot
+;
+;
+
+if DEBUG
+str_copystart:
+        db "Copying to $"
+str_cpm3entry:
+        db "CP/M 3 entry point $"
+str_newline:
+        db 13, 10, "$"
+endif
+
+str_signon:
+    db  "CPMLDR3.COM: v1.0 September 2021, Steve Bradford\r\n"
+    db  "Z80 Playground [8bitStack.co.uk]\r\n"
+    db  "$"
+
+cpmfcb: 
+    db  0, "CPM3    SYS", 0, 0, 0, 0, 0, 0
+    dw  0, 0, 0, 0, 0, 0, 0, 0, 0
+str_openerr:        
+    db  "\r\n"
+    db  "CPMLDR3: failed to open CPM3.SYS"
+    db  "\r\n$"
+str_readerr:        
+    db  "\r\n"
+    db  "CPMLDR3: failed to read CPM3.SYS"
+    db  "\r\n$"
+str_wrongCPM:
+    db  "\r\n"
+    db  "CPMLDR3: incorrect CP/M version"
+    db  "\r\n$"
+str_readend:
+    db  "\r\n"
+    db  "CPMLDR3: CPM3.SYS loaded"
+    db  "\r\n$"
+
+; **************
+; functions
+; **************
+
+; function printStr
+printStr:
+        ld a, (hl)
+	cp '$'              ; end of string?
+	ret z
+	
+	push hl             ; preserve string pointer
+	ld c, a             ; character to print
+	call conout	    ; call BIOS
+	pop hl
+	inc hl		    ; point to the next character
+	jr printStr
+; function printStr end
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+; function PRINT_HEX
+; print a hexadecimal byte
+;
+; entry:
+;   A byte to print
+; 
+PRINT_HEX:  
+            PUSH    AF
+            RRCA                         
+            RRCA 
+            RRCA 
+            RRCA                        ; get high nibble
+            CALL    PASS1               ; 
+            POP     AF
+PASS1:      AND     $0F
+            ADD     A,$30
+            CP      $3A
+            JR      C,NUM               ; A < $3a - 0-9
+            ADD     A,$07               ; else A-F
+NUM:
+            LD      C, A
+            CALL    conout
+
+            RET
+; function end
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+
+
+; **************
+; end functions
+; **************
+
+
+; **************
+; vectors
+; **************
+
+; BIOS function 3
+; console character output from register c
+conout:
+	in a, (13)   		; check UART is ready to send.
+        bit 5, a         	; zero flag set to true if bit 5 is 0
+	jp z, conout		; loop until port ready
+
+	ld a, c		    	; get the char
+	out (8), a		; out to port
+	ret
+;
+;
+;
+v_wboot:    dw 0
+v_conout:   dw 0
+            
+
+; **************
+; end vectors
+; **************
+
+toppage:    ds 1
+pages:      ds 1
+cpm3entry:  ds 2
+cpmsp:      dw 1, 0
+
+            ds 20h, 0       ; program stack space 32 bytes (or 16 addresses), initialised to zero's
+tmpstack:   equ $
+
+            end
+

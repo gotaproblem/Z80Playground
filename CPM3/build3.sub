@@ -1,0 +1,16 @@
+; Z80 Playground
+; Steve Bradford Nov 2021
+;
+; CP/M 3 build - Non-Banked
+;
+; The end result is a new CPM3.SYS file.
+; This needs to be copied to A: drive when you are happy
+d:
+z80asm scb
+z80asm ch376s
+z80asm pbios3
+link bios3[os]=pbios3,scb,ch376s
+gencpm auto
+era bios3.sym
+; pip a:=cpm3.sys
+

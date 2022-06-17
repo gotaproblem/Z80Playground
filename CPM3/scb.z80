@@ -1,0 +1,75 @@
+;
+; This file is part of yaze-ag - yet another Z80 emulator by ag.
+;
+; Copyright (C) 2002 Andreas Gerlich (Andreas.Gerlich@mathematik.uni-ulm.de)
+;
+; Yaze-ag is free software; you can redistribute it and/or modify it under
+; the terms of the GNU General Public License as published by the Free
+; Software Foundation; either version 2 of the License, or (at your
+; option) any later version.
+;
+; This program is distributed in the hope that it will be useful, but
+; WITHOUT ANY WARRANTY; without even the implied warranty of
+; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+; General Public License for more details.
+;
+; You should have received a copy of the GNU General Public License
+; along with this program (see the file COPYING);
+; if not, write to the Free Software Foundation, Inc.,
+; 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+;
+
+	public	@civec,	@covec,	@aivec,	@aovec,	@lovec,	@bnkbf
+	public	@crdma,	@crdsk,	@vinfo,	@resel,	@fx, @usrcd
+	public	@mltio,	@ermde,	@erdsk,	@media,	@bflgs
+	public	@date, @hour, @min, @sec, ?erjmp, @mxtpa
+
+	public	@dfdsk		; by agl
+	public	@tpdrv
+
+	public	scb$base
+
+scb$base equ	0FE00H		; Base of the SCB
+
+@DFDSK	equ	scb$base+13h	; default disk
+				; 0..15 (Byte, r/o)
+@CIVEC	equ	scb$base+22h	; Console Input Redirection
+				; Vector (word, r/w)
+@COVEC	equ	scb$base+24h	; Console Output Redirection
+				; Vector (word, r/w)
+@AIVEC	equ	scb$base+26h	; Auxiliary Input Redirection
+				; Vector (word, r/w)
+@AOVEC	equ	scb$base+28h	; Auxiliary Output Redirection
+				; Vector (word, r/w)
+@LOVEC	equ	scb$base+2Ah	; List Output Redirection
+				; Vector (word, r/w)
+@BNKBF	equ	scb$base+35h	; Address of 128 Byte Buffer
+				; for Banked BIOS (word, r/o)
+@CRDMA	equ	scb$base+3Ch	; Current DMA Address
+				; (word, r/o)
+@CRDSK	equ	scb$base+3Eh	; Current Disk (byte, r/o)
+@VINFO	equ	scb$base+3Fh	; BDOS Variable "INFO"
+				; (word, r/o)
+@RESEL	equ	scb$base+41h	; FCB Flag (byte, r/o)
+@FX	equ	scb$base+43h	; BDOS Function for Error
+				; Messages (byte, r/o)
+@USRCD	equ	scb$base+44h	; Current User Code (byte, r/o)
+@MLTIO	equ	scb$base+4Ah	; Current Multi-Sector Count
+				; (byte, r/w)
+@ERMDE	equ	scb$base+4Bh	; BDOS Error Mode (byte, r/o)
+@TPDRV	equ	scb$base+50h	; Temorary File Drive
+@ERDSK	equ	scb$base+51h	; BDOS Error Disk (byte, r/o)
+@MEDIA	equ	scb$base+54h	; Set by BIOS to indicate
+				; open door (byte, r/w)
+@BFLGS	equ	scb$base+57h	; BDOS Message Size Flag (byte, r/o)
+@DATE	equ	scb$base+58h	; Date in Days Since 1 Jan 78
+				; (word, r/w)
+@HOUR	equ	scb$base+5Ah	; Hour in BCD (byte, r/w)
+@MIN	equ	scb$base+5Bh	; Minute in BCD (byte, r/w)
+@SEC	equ	scb$base+5Ch	; Second in BCD (byte, r/w)
+?ERJMP	equ	scb$base+5Fh	; BDOS Error Message Jump
+				; (word, r/w)
+@MXTPA	equ	scb$base+62h	; Top of User TPA
+				; (address at 6, 7) (word, r/o)
+
+	end

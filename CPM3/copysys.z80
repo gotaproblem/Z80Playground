@@ -1,0 +1,826 @@
+;	title	'Copysys - updated sysgen program 6/82'
+; System generation program
+VERS:	equ	30		;version x.x for CP/M x.x
+;
+;**********************************************************
+;*							  *
+;*							  *
+;*		Copysys source code			  *
+;*							  *
+;*							  *
+;**********************************************************
+;
+FALSE:	equ	0
+TRUE:	equ	not FALSE
+;
+;
+NSECTS:	equ	26		;no. of sectors
+NTRKS:	equ	2		;no. of systems tracks
+NDISKS:	equ	4		;no. of disks drives
+SECSIZ:	equ	128		;size of sector
+LOG2SEC:	equ	7	;LOG2 128
+;SKEW:	equ	1		;skew sector factor - NOTE no skew for first 2 tracks
+;
+FCB:	equ	005Ch		;location of FCB
+FCBCR:	equ	FCB+32		;current record location
+TPA:	equ	0100h		;Transient Program Area
+LOADP:	equ	1000h		;LOAD Point for system
+BDOS:	equ	05h		;DOS entry point
+BOOT:	equ	00h		;reboot for system
+CONI:	equ	1h		;console input function
+CONO:	equ	2h		;console output function
+SELD:	equ	14		;select a disk
+OPENF:	equ	15		;disk open function
+CLOSEF:	equ	16		;open a file
+DWRITF:	equ	21		;Write func
+MAKEF:	equ	22		;mae a file
+DELTEF:	equ	19		;delete a file
+DREADF:	equ	20		;disk read function
+DRBIOS:	equ	50		;Direct BIOS call function
+EIGHTY:	equ	080h		;value of 80
+CTLC:	equ	'C'-'@'		;ConTroL C
+Y:	equ	89		;ASCII value of Y
+;
+MAXTRY:	equ	01		;maximum number of tries
+CR:	equ	0Dh		;Carriage Return
+LF:	equ	0Ah		;Line Feed
+STACKSIZE:	equ	016h	;size of local stack
+;
+WBOOT:	equ	01		;address of warm boot
+;
+SELDSK:	equ	9		;Bios func #9 SELect DiSK
+SETTRK:	equ	10		;BIOS func #10 SET TRacK
+SETSEC:	equ	11		;BIOS func #11 SET SECtor
+SETDMA:	equ	12		;BIOS func #12 SET DMA address
+READF:	equ	13		;BIOS func #13 READ selected sector
+WRITF:	equ	14		;BIOS func #14 WRITe selected sector
+;
+	org	TPA		;Transient Program Area
+	JP	START
+	DEFW	0,0,0,0,0,0,0,0
+	DEFW	0,0,0,0,0,0,0,0
+	DEFW	0,0,0,0,0,0,0,0
+	DEFW	0,0,0,0,0,0,0,0
+	DEFW	0,0,0,0,0
+	DEFB	0,0,0
+	;maclib	makedate
+	;@LCOPY
+	;@BDATE
+	DEFB	0,0,0,0
+	DEFB	'654321'
+;
+; Translate table-sector numbers are translated here to decrease
+; the systen tie for missed sectors when slow controllers are
+; involved.  Translate takes place according to the "SKEW" factor
+; set above.
+;
+OST:	DEFB	NTRKS		;operating system tracks
+SPT:	DEFB	NSECTS		;sectors per track
+TRAN:	
+;TRELT:	DEFL	1
+;TRBASE:	DEFL	1
+;	rept	NSECTS
+;	DEFB	TRELT		;generate first/next sector
+;TRELT:	DEFL	TRELT+SKEW
+;	if	TRELT gt NSECTS
+;TRBASE:	DEFL	TRBASE+1
+;TRELT:	DEFL	TRBASE
+;	endif	
+;	endm	
+;
+; Now leave space for extensions to translate table
+;
+;	if	NSECTS lt 64
+;	rept	64-NSECTS
+;	DEFB	0
+;	endm	
+;	endif	
+;
+; Utility subroutines
+;
+MLTBY3:	
+;multiply the contents of regE to get jmp address
+	LD	A,E		;Acc = E
+	SUB	1
+	LD	E,A		;get ready for multiply
+	ADD	A,E
+	ADD	A,E
+	LD	E,A
+	RET			;back at it
+;
+SEL:	
+	LD	(TEMP),A
+	LD	A,(V3FLG)
+	CP	TRUE
+	LD	A,(TEMP)
+	jp  nz,	SEL2
+;
+	LD	(CREG),A	;CREG = selected register
+	LD	HL,0000h
+	LD	(EREG),HL	;for first time
+	LD	A,SELDSK
+	LD	(BIOSFC),A	;store it in func space
+	LD	C,DRBIOS
+	LD	DE,BIOSPB
+	JP	BDOS
+SEL2:	
+	LD	C,A
+	LD	HL,(WBOOT)
+	LD	DE,SELDSK
+	CALL	MLTBY3
+	ADD	HL,DE
+	JP	(HL)
+;
+TRK:	
+; Set up track
+	LD	(TEMP),A
+	LD	A,(V3FLG)
+	CP	TRUE
+	LD	A,(TEMP)
+	jp  nz,	TRK2
+;
+	LD	A,00h
+	LD	(BREG),A	;zero out B register
+	LD	A,C		;Acc = track #
+	LD	(CREG),A	;set up PB
+	LD	A,SETTRK	;settrk func #
+	LD	(BIOSFC),A
+	LD	C,DRBIOS
+	LD	DE,BIOSPB
+	JP	BDOS
+TRK2:	
+	LD	HL,(WBOOT)
+	LD	DE,SETTRK
+	CALL	MLTBY3
+	ADD	HL,DE
+	JP	(HL)		;gone to set track
+;
+SEC:	
+; Set up sector number
+	LD	(TEMP),A
+	LD	A,(V3FLG)
+	CP	TRUE
+	LD	A,(TEMP)
+	jp  nz,	SEC2
+;
+	LD	A,00h
+	LD	(BREG),A	;zero out BREG
+	LD	A,C		; Acc = C
+	LD	(CREG),A	;CREG = sector #
+	LD	A,SETSEC
+	LD	(BIOSFC),A	;set up bios call
+	LD	C,DRBIOS
+	LD	DE,BIOSPB
+	JP	BDOS
+SEC2:	
+	LD	HL,(WBOOT)
+	LD	DE,SETSEC
+	CALL	MLTBY3
+	ADD	HL,DE
+	JP	(HL)
+;
+DMA:	
+; Set DMA address to value of BC
+	LD	(TEMP),A
+	LD	A,(V3FLG)
+	CP	TRUE
+	LD	A,(TEMP)
+	jp  nz,	DMA2
+;
+	LD	A,B		;
+	LD	(BREG),A	;
+	LD	A,C		;Set up the BC
+	LD	(CREG),A	;register pair
+	LD	A,SETDMA	;
+	LD	(BIOSFC),A	;set up bios #
+	LD	C,DRBIOS
+	LD	DE,BIOSPB
+	JP	BDOS
+DMA2:	
+	LD	HL,(WBOOT)
+	LD	DE,SETDMA
+	CALL	MLTBY3
+	ADD	HL,DE
+	JP	(HL)
+;
+READ:	
+; Perform read operation
+	LD	(TEMP),A
+	LD	A,(V3FLG)
+	CP	TRUE
+	LD	A,(TEMP)
+	jp nz,	READ2
+;
+	LD	A,READF
+	LD	(BIOSFC),A
+	LD	C,DRBIOS
+	LD	DE,BIOSPB
+	JP	BDOS
+READ2:	
+	LD	HL,(WBOOT)
+	LD	DE,READF
+	CALL	MLTBY3
+	ADD	HL,DE
+	JP	(HL)
+;
+WRITE:	
+; Perform write operation
+	LD	(TEMP),A
+	LD	A,(V3FLG)
+	CP	TRUE
+	LD	A,(TEMP)
+	jp  nz,	WRITE2
+;
+	LD	A,WRITF
+	LD	(BIOSFC),A	;set up bios #
+	LD	C,DRBIOS
+	LD	DE,BIOSPB
+	JP	BDOS
+WRITE2:	
+	LD	HL,(WBOOT)
+	LD	DE,WRITF
+	CALL	MLTBY3
+	ADD	HL,DE
+	JP	(HL)
+;
+MULTSEC:	
+; Multiply the sector # in rA by the sector size
+	LD	L,A
+	LD	H,0		;sector in hl
+	rept	LOG2SEC
+	ADD	HL,HL
+	endm	
+	RET			;with HL - sector*sectorsize
+;
+GETCHAR:	
+; Read console character to rA
+	LD	C,CONI
+	CALL	BDOS
+; Convert to upper case
+	CP	'A' or 20h
+	ret c	
+	CP	('Z' or 20h)+1
+	ret nc	
+	AND	05Fh
+	RET	
+;
+PUTCHAR:	
+; Write character from rA to console
+	LD	E,A
+	LD	C,CONO
+	CALL	BDOS
+	RET	
+;
+CRLF:	
+; Send Carriage Return, Line Feed
+	LD	A,CR
+	CALL	PUTCHAR
+	LD	A,LF
+	CALL	PUTCHAR
+	RET	
+;
+CRMSG:	
+; Print message addressed by the HL until zero with leading CRLF
+	PUSH	DE
+	CALL	CRLF
+	POP	DE		;drop through to OUTMSG
+OUTMSG:	
+	LD	C,9
+	JP	BDOS
+;
+SELCT:	
+; Select disk given by rA
+	LD	C,0Eh
+	JP	BDOS
+;
+DWRITE:	
+; Write for file copy
+	LD	C,DWRITF
+	JP	BDOS
+;
+DREAD:	
+; Disk read function
+	LD	C,DREADF
+	JP	BDOS
+;
+OPEN:	
+; File open function
+	LD	C,OPENF
+	JP	BDOS
+;
+CLOSE:	
+	LD	C,CLOSEF
+	JP	BDOS
+;
+MAKE:	
+	LD	C,MAKEF
+	JP	BDOS
+;
+DELETE:	
+	LD	C,DELTEF
+	JP	BDOS
+;
+;
+;
+DSTDMA:	
+	LD	C,26
+	JP	BDOS
+;
+SOURCE:	
+	LD	DE,GETPRM			;ask user for source drive
+	CALL	CRMSG
+	CALL	GETCHAR			;obtain response
+	CP	CR					;is it CR?
+	jp  z,	DFLTDR			;skip if CR only
+	CP	CTLC				;is it ^C?
+	jp  z,	REBOOT
+;
+	SUB	'A'					;normalize drive #
+	CP	NDISKS				;valid drive?
+	jp  c,	GETC			;skip to GETC if so
+;
+; Invalid drive
+	CALL	BADDISK			;tell user bad drive
+	JP	SOURCE				;try again
+;
+GETC:	
+; Select disk given by Acc.
+	ADD	A,'A'
+	LD	(GDISK),A	;store source disk
+	SUB	'A'
+	LD	E,A		;move disk into E for select func
+	CALL	SEL		;select the disk
+	JP	GETVER
+;
+DFLTDR:	
+	LD	C,25		;func 25 for current disk
+	CALL	BDOS		;get curdsk
+	ADD	A,'A'
+	LD	(GDISK),A
+	CALL	CRLF
+	LD	DE,VERGET
+	CALL	OUTMSG
+	JP	VERCR
+;
+GETVER:	
+; Getsys set r/w to read and get the system
+	CALL	CRLF
+	LD	DE,VERGET	;verify source disk
+	CALL	OUTMSG
+VERCR:	CALL	GETCHAR
+	CP	CR
+	jp  nz,	REBOOT		;jmp only if not verified
+	CALL	CRLF
+	RET	
+;
+DESTIN:	
+	LD	DE,PUTPRM	;address of message
+	CALL	CRMSG		;print it
+	CALL	GETCHAR		;get answer
+	CP	CR
+	jp  z,	REBOOT		;all done
+	SUB	'A'
+	CP	NDISKS		;valid disk
+	jp  c,	PUTC
+;
+; Invalid drive
+	CALL	BADDISK		;tell user bad drive
+	JP	PUTSYS		;to try again
+;
+PUTC:	
+; Set disk fron rA
+	ADD	A,'A'
+	LD	(PDISK),A	;message sent
+	SUB	'A'
+	LD	E,A		;disk # in E
+	CALL	SEL		;select destination drive
+; Put system, set r/w to write
+	LD	DE,VERPUT	;verify dest prmpt
+	CALL	CRMSG		;print it out
+	CALL	GETCHAR		;retrieve answer
+	CP	CR	
+	jp  nz,	REBOOT		;exit to system if error
+	CALL	CRLF
+	RET	
+;
+;
+GETPUT:	
+; Get or put CP/M (rw = 0 for read, 1 for write)
+; disk is already selected
+	LD	HL,LOADP	;load point in RAM for DMA address
+	LD	(DMADDR),HL
+;
+;
+;
+;
+; Clear track 00
+	LD	A,-1		;
+	LD	(TRACK),A
+;
+RWTRK:	
+; Read or write next track
+	LD	HL,TRACK
+	INC	(HL)		;track = track+1
+	LD	A,(OST)		;# of OS tracks
+	CP	(HL)		;=track # ?
+	jp  z,	ENDRW		;end of read/write
+;
+; Otherwise not done
+	LD	C,(HL)		;track number
+	CALL	TRK		;set to track
+	LD	A,-1		;counts 0,1,2,...,25
+	LD	(SECTOR),A
+;
+RWSEC:	
+; Read or write a sector
+	LD	A,(SPT)		;sectors per track
+	LD	HL,SECTOR	
+	INC	(HL)		;set to next sector
+	CP	(HL)		;A=26 and M=0,1,..,25
+	jp  z,	ENDTRK
+;
+; Read or write sector to or from current DMA address
+	LD	HL,SECTOR
+	;LD	E,(HL)		;sector number
+	;LD	D,0		;to DE
+	;LD	HL,TRAN	
+	;LD	B,(HL)		;tran(0) in B
+	;ADD	HL,DE		;sector translated
+	LD	C,(HL)		;value to C ready for select
+	PUSH	BC		;save tran(0)
+	CALL	SEC
+	POP	BC		;recall tran(0),tran(sector)
+	LD	A,C		;tran(sector)
+	;SUB	B		;--tran(sector)
+	CALL	MULTSEC		;*sector size
+	EX	DE,HL		;to DE
+	LD	HL,(DMADDR)	;base DMA
+	ADD	HL,DE
+	LD	B,H
+	LD	C,L		;to set BC for SEC call
+	CALL	DMA		;dma address set from BC
+	XOR	A
+	LD	(RETRY),A	;to set zero retries
+;
+TRYSEC:	
+; Try to read or write current sector
+	LD	A,(RETRY)
+	CP	MAXTRY
+	jp  c,	TRYOK
+;
+; Past MAXTRY, message and ignore
+	LD	DE,ERRMSG
+	CALL	OUTMSG
+	CALL	GETCHAR
+	CP	CR
+	jp  nz,	REBOOT
+;
+; Typed a CR, ok to ignore
+	CALL	CRLF
+	JP	RWSEC
+;
+TRYOK:	
+; Ok to tyr read write
+	INC	A
+	LD	(RETRY),A	
+	LD	A,(RW)
+	OR	A
+	jp  z,	TRYREAD
+;
+; Must be write
+	CALL	WRITE
+	JP	CHKRW
+TRYREAD:	
+	CALL	READ
+CHKRW:	
+	OR	A
+	jp  z,	RWSEC		;zero flag if read/write ok
+;
+;Error, retry operation
+	JP	TRYSEC
+;
+; End of track
+ENDTRK:	
+	LD	A,(SPT)		;sectors per track
+	CALL	MULTSEC		;*secsize
+	EX	DE,HL		; to DE
+	LD	HL,(DMADDR)	;base dma for this track
+	ADD	HL,DE		;+spt*secsize
+	LD	(DMADDR),HL	;ready for next track
+	JP	RWTRK		;for another track
+;
+ENDRW:	
+; End of read or write
+	RET	
+;
+;*******************
+;*
+;*	MAIN ROUTINE
+;*
+;*
+;*******************
+;
+START:	
+	LD	sp,STACK
+	LD	DE,SIGNON
+	CALL	OUTMSG
+;
+;get version number to check compatability
+	LD	C,12		;version check
+	CALL	BDOS
+	LD	A,L		;version in Acc
+	CP	30h		;version 3 or newer?
+	jp  c,	OLDRVR		;
+	LD	A,TRUE
+	LD	(V3FLG),A	;
+	JP	FCBCHK
+OLDRVR:	
+	LD	A,FALSE
+	LD	(V3FLG),A
+;
+; Check for default file liad instead of get
+FCBCHK:	LD	A,(FCB+1)	;blank if no file
+	CP	' '
+	jp  z,	GETSYS		;skip to system message
+	LD	DE,FCB		;try to open it
+	CALL	OPEN
+	INC	A		;255 becomes 00
+	jp  nz,	RDOK
+;
+; File not present
+	LD	DE,NOFILE
+	CALL	CRMSG
+	JP	REBOOT
+;
+;file present
+RDOK:	
+	XOR	A
+	LD	(FCBCR),A	;current record = 0
+	LD	HL,LOADP
+RDINP:	
+	PUSH	HL
+	LD	B,H
+	LD	C,L
+	CALL	DMA		;DMA address set
+	LD	DE,FCB		;ready fr read
+	CALL	DREAD
+	POP	HL		;recall
+	OR	A		;00 if read ok
+	jp  nz,	PUTSYS		;assume eof if not
+; More to read continue
+	LD	DE,SECSIZ 
+	ADD	HL,DE		;HL is new load address
+	JP	RDINP
+;
+GETSYS:	
+	CALL	SOURCE		;find out source drive
+;
+	XOR	A		;zero out a
+	LD	(RW),A		;RW = 0 to signify read
+	CALL	GETPUT		;get or read system
+	LD	DE,DONE		;end message of get or read func
+	CALL	OUTMSG		;print it out
+;
+; Put the system
+PUTSYS:	
+	CALL	DESTIN		;get dest drive
+;
+	LD	HL,RW		;load address
+	LD	(HL),1
+	CALL	GETPUT		;to put system back on disk
+	LD	DE,DONE
+	CALL	OUTMSG		;print out end prompt
+;
+;	FILE COPY FOR CPM.SYS
+;
+CPYCPM:	
+; Prompt the user for the source of CP/M3.SYS
+;
+	LD	DE,CPYMSG	;print copys prompt
+	CALL	CRMSG		;print it
+	CALL	GETCHAR		;obtain reply
+	CP	Y		;is it yes?
+	jp  nz,	REBOOT		;if not exit
+	;else
+;
+;
+	LD	C,13		;func # for reset
+	CALL	BDOS		;
+	INC	A
+	LD	DE,ERRMSG
+	call z,	FINIS
+;
+	CALL	SOURCE		;get source disk for CPM3.SYS
+CNTNUE:	
+	LD	A,(GDISK)	;Acc = source disk
+	SUB	'A'
+	LD	D,00h
+	LD	E,A		;DE = selected disk
+	CALL	SELCT
+; now copy the FCBs
+	LD	C,36		;for copy
+	LD	DE,SFCB		;source file
+	LD	HL,DFCB		;destination file
+MFCB:	
+	LD	A,(DE)
+	INC	DE		;ready next
+	LD	(HL),A
+	INC	HL		;ready next dest
+	DEC	C		;decrement coun
+	jp  nz,	MFCB
+;
+	LD	A,(GDISK)	;Acc = source disk
+	SUB	40h		;correct disk
+	LD	HL,SFCB
+	LD	(HL),A		;SFCB has source disk #
+	LD	A,(PDISK)	;get the dest. disk
+	LD	HL,DFCB		;
+	SUB	040h		;normalize disk
+	LD	(HL),A
+;
+	XOR	A		;zero out a
+	LD	(DFCBCR),A	;current rec = 0
+;
+; Source and destination fcb's ready
+;
+	LD	DE,SFCB		;
+	CALL	OPEN		;open the file
+	LD	DE,NOFILE	;error messg
+	INC	A		;255 becomes 0
+	call z,	FINIS		;done if no file
+;
+; Source file is present and open
+	LD	DE,LOADP	;get DMA address
+	EX	DE,HL		;move address to HL regs
+	LD	(BEGIN),HL	;save for begin of write
+;
+	LD	A,(BEGIN)	;get low byte of
+	LD	L,A		;DMA address into L
+	LD	A,(BEGIN+1)	;
+	LD	H,A		;into H also
+COPY1:	
+	EX	DE,HL		;DE = address of DMA
+	CALL	DSTDMA		;
+;
+	LD	DE,SFCB		;
+	CALL	DREAD		;read next record
+	OR	A		;end of file?
+	jp  nz,	EOF		;skip write if so
+;
+	LD	A,(CRNREC)
+	INC	A		;bump it
+	LD	(CRNREC),A
+;
+	LD	A,(BEGIN)
+	LD	L,A
+	LD	A,(BEGIN+1)
+	LD	H,A
+	LD	DE,EIGHTY
+	ADD	HL,DE		;add eighty to begin address
+	LD	(BEGIN),HL
+	JP	COPY1		;loop until EOF
+;
+EOF:	
+	LD	DE,DONE
+	CALL	OUTMSG
+;
+COPY2:	
+	CALL	DESTIN		;get destination drive for CPM3.SYS
+	LD	DE,DFCB		;set up dest FCB
+	EX	DE,HL
+	LD	A,(PDISK)
+	SUB	040h		;normalize disk
+	LD	(HL),A		;correct disk for dest
+	EX	DE,HL		;DE = DFCB
+	CALL	DELETE		;delete file if there
+;
+	LD	DE,DFCB		;
+	CALL	MAKE		;make a new one
+	LD	DE,NODIR
+	INC	A		;check directory space
+	call z,	FINIS		;end if none
+;
+	LD	DE,LOADP
+	EX	DE,HL
+	LD	(BEGIN),HL
+;
+	LD	A,(BEGIN)
+	LD	L,A
+	LD	A,(BEGIN+1)
+	LD	H,A
+LOOP2:	
+	EX	DE,HL
+	CALL	DSTDMA
+	LD	DE,DFCB
+	CALL	DWRITE
+	LD	DE,FSPACE
+	OR	A
+	call nz,	FINIS
+	LD	A,(CRNREC)
+	DEC	A
+	LD	(CRNREC),A
+	CP	0
+	jp  z,	FNLMSG
+	LD	A,(BEGIN)
+	LD	L,A
+	LD	A,(BEGIN+1)
+	LD	H,A
+	LD	DE,EIGHTY
+	ADD	HL,DE
+	LD	(BEGIN),HL
+	JP	LOOP2
+; Copy operation complete
+FNLMSG:	
+	LD	DE,DFCB
+	LD	C,CLOSEF
+	CALL	BDOS
+;
+	LD	DE,DONE
+;
+FINIS:	
+; Write message given by DE, reboot
+	CALL	OUTMSG
+;
+REBOOT:	
+	LD	C,13
+	CALL	BDOS
+	CALL	CRLF
+	JP	BOOT
+;
+BADDISK:	
+	LD	DE,QDISK
+	CALL	CRMSG
+	RET	
+;****************************
+;*
+;*
+;*	DATA STRUCTURES     
+;*
+;*
+;****************************
+;
+BIOSPB:	
+; BIOS Parameter Block
+BIOSFC:	DEFB	0		;BIOS function number
+AREG:	DEFB	0		;A register contents
+CREG:	DEFB	0		;C register contents
+BREG:	DEFB	0		;B register contents
+EREG:	DEFB	0		;E register contents
+DREG:	DEFB	0		;D register contents
+HLREG:	DEFW	0		;HL register contents
+;
+SFCB:	
+DR:	DEFS	1
+F1F8:	DEFB	'CPM3    '
+T1T3:	DEFB	'SYS'
+EXT:	DEFB	0
+CS:	DEFB	0
+RS:	DEFB	0
+RCC:	DEFB	0
+D0D15:	DEFS	16
+CCR:	DEFB	0
+R0R2:	DEFS	3
+;
+DFCB:	DEFS	36
+DFCBCR:	equ	DFCB+32
+;
+;
+V3FLG:	DEFB	0		;flag for version #
+TEMP:	DEFB	0
+SDISK:	DEFS	1		;selected disk
+BEGIN:	DEFW	0
+DFLAG:	DEFB	0
+TRACK:	DEFS	1		;current track
+CRNREC:	DEFB	0		;current rec count
+SECTOR:	DEFS	1		;current sector
+RW:	DEFS	1		;read if 0 write if 1
+DMADDR:	DEFS	2		;current DMA address
+RETRY:	DEFS	1		;number of tries on this sector
+SIGNON:	DEFB	'CP/M 3 COPYSYS - Version '
+	DEFB	VERS/10+'0','.',VERS mod 10 +'0'
+	DEFB	'$'
+GETPRM:	DEFB	'Source drive name (or return for default) $'
+VERGET:	DEFB	'Source on '
+GDISK:	DEFS	1
+	DEFB	' then type return $'
+PUTPRM:	DEFB	'Destination drive name (or return to reboot) $'
+VERPUT:	DEFB	'Destination on '
+PDISK:	DEFS	1
+	DEFB	' then type return $'
+CPYMSG:	DEFB	'Do you wish to copy CPM3.SYS? $'
+DONE:	DEFB	'Function complete$'
+;
+; Error messages......
+;
+QDISK:	DEFB	'ERROR: Invalid drive name (Use A, B, C, or D)$'
+NOFILE:	DEFB	'ERROR: No source file on disk.$'
+NODIR:	DEFB	'ERROR: No directory space.$'
+FSPACE:	DEFB	'ERROR: Out of data space.$'
+WRPROT:	DEFB	'ERROR: Write protected?$'
+ERRMSG:	DEFB	'ERROR: Possible incompatible disk format.'
+	DEFB	CR,LF,' Type return to ignore.$' 
+CLSERR:	DEFB	'ERROR: Close operation failed.$'
+;
+	DEFS	STACKSIZE*3
+STACK:	
+	end

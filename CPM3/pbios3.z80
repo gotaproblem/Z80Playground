@@ -1,0 +1,1741 @@
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/10/2021                                           *
+; *                                                      *
+; * Z80 Playground BIOS for CP/M 3                       *
+; * CP/M 3 Non-Banked									 *
+; *                                                      *
+; * Filename:                                            *
+; * pbios3.z80                                           *
+; *                                                      *
+; * History                                              *
+; * v1.0   October     2021	Initial release              *
+; *                                                      *
+; ********************************************************
+;
+; *************************************
+; * Hardware                Ports     *
+; * SC16C550 UART           $08       *
+; * USB CH376S Disk Module  $10       *
+; *                                   *
+; * 64KB RAM                          *
+; * 32KB ROM                          *
+; *                                   *
+; * Control IO                        *
+; *   ROM Enable            $0C bit 3 *
+; *   USER LED              $0C bit 0 *
+; *   DISK LED              $0C bit 2 *
+; *   CH376S data           $10       *
+; *   CH376S command        $11       *
+; *                                   *
+; *************************************
+;
+;
+;--------------------------------------------------------
+;
+;	The CP/M Plus BIOS implements 32 entry points in
+;its jump table.  Of these, the first 17 correspond to the
+;17 entries in the CP/M-80 v2.2 jump table.  14 of these
+;are treated as identical to those in 2.2.  These index
+;directly into the 2.2 jump table.  The remaining three in the
+;2.2 set are BOOT, which is null, WBOOT, which loads CCP.COM,
+;and SELDSK which creates all of the necessary disk data
+;structures required by CP/M Plus based on those in the 2.2 BIOS.
+;The remaining 15 entries in the CP/M Plus BIOS, with the
+;single exception of MOVE, are implemented in one of
+;the following ways:
+;
+;	1.)	null, simply return.
+;	2.)	nearly null, do something really simple.
+;	3.)	tell a white lie.
+;
+;--------------------------------------------------------
+;
+;	Build Options
+CPU_4MHZ    		DEFL    0				; select CPU clock speed
+CPU_10MHZ   		DEFL    1				; one or the other only
+DEBUG       		DEFL    0       		; set to 1 for DEBUG code
+LED_BLINK   		DEFL    0
+DEBUG_FILEP 		DEFL    0
+DEBUG_DRV   		DEFL    0
+
+
+
+
+
+
+true:				equ		-1
+false:				equ		not true
+
+print:				equ		9
+open:				equ		15					; BDOS function
+readseq:			equ		20
+dma:				equ		26
+multisec:			equ 	44
+drives:				equ		4					; number of drives supported
+
+;--------------------------------------------------------
+;
+;	external references
+;
+;--------------------------------------------------------
+	extrn	@civec, @covec, @aovec, @aivec, @lovec, @bnkbf
+	extrn	@crdma
+	extrn	@crdsk,	@fx, @resel, @vinfo, @usrcd, @ermde
+	extrn	@date, @hour, @min, @sec, @mxtpa
+
+	extrn 	ch376s_init, read_data, read_status
+	extrn 	send_command, send_data
+;--------------------------------------------------------
+;
+;	public declarations
+;
+;--------------------------------------------------------
+;
+	public puts
+;
+
+; character IO definitions
+charinput			equ		00000001b			; device may do input
+charoutput			equ		00000010b			; device may do output
+chario				equ		charinput+charoutput
+baudnone			equ		0					; no baud rate associated
+
+;
+; 16C550 Dual UART Registers
+;
+; General Register Set
+; only available when LCR is set to $00 (bit 7 = 0)
+UIER       			EQU     1               	; Interrupt Enable Register friendly name
+UISR				EQU		2					; Interrupt Status Register friendly name
+UFCR       			EQU     2               	; FIFO Control Register friendly name
+ULCR       			EQU     3               	; Line Control Register friendly name
+UMCR       			EQU     4               	; Modem Control Register friendly name
+ULSR       			EQU     5               	; Line Status Register friendly name
+UMSR        		EQU     6               	; Modem Status Register friendly name
+USPR       			EQU     7              		; Scratchpad Register friendly name
+
+; Baud Rate Register Set
+; only available when LCR is set to $80 (bit 7 = 1)
+UDLL       			EQU     0                   ; LSB of Divisor Latch (rw)
+UDLM       			EQU     1                   ; MSB of Divisor Latch (rw)
+
+; Enhanced Register Set
+; only accessible when LCR is set to $bf
+UFR2      			EQU     2                   ; Enhanced Feature register (rw)
+UFR4       			EQU     4                   ; XON1 word (rw)
+UFR5       			EQU     5                   ; XON2 word (rw)
+UFR6       			EQU     6                   ; XOFF1 word (rw)
+UFR7       			EQU     7                   ; XOFF2 word (rw)
+
+
+; UART A IO Port Addres
+UARTA      			EQU     8                	; mapped to IO Port 
+
+
+; UARTA Register Address offsets
+UALSR      			EQU     UARTA+ULSR
+UAMCR				EQU		UARTA+UMCR
+UAMSR				EQU		UARTA+UMSR
+UAFCR				EQU		UARTA+UFCR
+UASPR      			EQU     UARTA+USPR
+UADLL      			EQU     UARTA+UDLL
+UADLM      			EQU     UARTA+UDLM
+UATX       			EQU     UARTA+0
+UARX       			EQU     UARTA+0
+
+;--- CH376 port to Z80 ports mapping
+CH_DATA_PORT 		equ 	10h
+CH_COMMAND_PORT 	equ 	11h  
+
+
+;--- Commands
+CH_CMD_RESET_ALL 	equ 	5
+CH_CMD_CHECK_EXIST 	equ 	6
+CH_CMD_SET_RETRY 	equ 	0Bh
+CH_CMD_DELAY_100US 	equ 	0Fh
+CH_CMD_SET_USB_ADDR equ 	13h
+CH_CMD_SET_USB_MODE equ 	15h
+CH_CMD_TEST_CONNECT equ 	16h
+CH_CMD_ABORT_NAK 	equ 	17h
+CH_CMD_GET_STATUS 	equ 	22h
+CH_CMD_RD_USB_DATA0 equ 	27h
+CH_CMD_WR_HOST_DATA equ 	2Ch
+CH_CMD_WR_REQ_DATA 	equ 	2Dh
+
+
+CH_CMD_SET_FILE_NAME equ 	2fh
+CH_CMD_DISK_CONNECT equ 	30h
+CH_CMD_DISK_MOUNT 	equ 	31h
+CH_CMD_FILE_OPEN 	equ 	32h
+CH_CMD_FILE_CREATE 	equ 	34h
+CH_CMD_FILE_ERASE 	equ 	35h
+CH_CMD_FILE_CLOSE 	equ 	36h
+CH_CMD_BYTE_LOCATE 	equ 	39h
+CH_CMD_BYTE_READ 	equ 	3ah
+CH_CMD_BYTE_RD_GO 	equ 	3bh
+CH_CMD_BYTE_WRITE 	equ 	3ch
+CH_CMD_BYTE_WR_GO 	equ 	3dh
+CH_CMD_DISK_CAPACITY equ 	3eh
+CH_CMD_DISK_QUERY 	equ 	3fh
+
+
+;--- Status codes
+
+CH_ST_INT_SUCCESS 	equ 	14h
+CH_ST_INT_CONNECT 	equ 	15h
+CH_ST_INT_DISCONNECT equ 	16h
+CH_ST_INT_BUF_OVER 	equ 	17h
+CH_ST_RET_SUCCESS 	equ 	51h
+CH_ST_RET_ABORT 	equ 	5Fh
+
+
+USB_INT_SUCCESS		equ 	14h
+USB_INT_CONNECT 	equ 	15h
+USB_INT_DISK_READ 	equ 	1Dh
+USB_INT_DISK_WRITE 	equ 	1Eh
+USB_INT_DISK_ERR 	equ 	1Fh
+
+
+;--------------------------------------------------------
+;
+;	ram definitions
+;
+;--------------------------------------------------------
+tpa:				equ		100h
+dffcb:				equ		5ch
+bdos:				equ		5
+ccp:				equ		tpa
+
+
+;--------------------------------------------------------
+;
+;	cp/m plus version 3.0 jump table
+;
+;--------------------------------------------------------
+	cseg	
+;
+	JP	boot		;arrive here from cold start load
+warmpt:	
+	JP	wboot		;arrive here for warm start
+	JP	const		;return console input status
+	JP	conin		;read console character
+	JP	conout		;write conlole character
+	JP	list		;write list character
+	JP	auxout		;write aux character
+	JP	auxin		;read aux character
+	JP	home		;move to track zero on selected drive
+	JP	seldsk		;select disk drive
+	JP	settrk		;set track number
+	JP	setsec		;set sector number
+	JP	setdma		;set DMA address
+	JP	read		;read selected sector
+	JP	write		;write selected sector
+	JP	listst		;return list device status
+	JP	sectrn		;translate logical to physical sector number
+	JP	conost		;return console output status
+	JP	auxist		;return aux device input status
+	JP	auxost		;return aux device output status
+	JP	devtbl		;return address of character i/o table
+	JP	devini		;init character i/o devices
+	JP	drvtbl		;return address of disk drive table
+	JP	multio		;set number of consec. sec. to read/write
+	JP	flush		;flush user [de]blocking buffers
+	JP	move		;copy memory to memory
+	JP	xmove		;set banks for next move
+	JP	selmem		;select memory bank
+	JP	setbnk		;set bank for next DMA
+	JP	userf		;can I use this somehow - ROM control perhaps???
+	JP	wboot
+	JP	wboot		;reserved for DRI
+;
+;
+;--------------------------------------------------------
+;
+;	initialization processes
+;
+;--------------------------------------------------------
+boot:	
+	ld sp, bstack       	; create programme stack space
+
+if LED_BLINK
+; LED_BLINK - sanity check to make sure coldboot is executed/called
+    in      a, (12)
+    and     0feh            ; User LED is bit 0
+    out     (12), a      	; clear user LED if on
+
+    ld      b, 2            ; number of flashes
+loop:
+    call    delay
+    call    toggle          ; LED on
+
+    call    delay
+    call    toggle          ; LED off
+
+    ld      a, b
+    dec     b
+    jp      nz, loop        ; loop until 0
+
+    jp      boote           ; CP/M warm boot
+
+toggle:
+    in      a, (12)      	; read port
+	bit     0, a            ; test current state of User LED
+	jr      z, toggle_on    ; User LED is off
+
+	and     0feh            ; mask bits 7 - 1, reset bit 0 = turn User LED off
+	jr      toggle_end
+
+toggle_on:
+	or      1               ; set bit 0 = turn User LED on
+toggle_end:
+	out     (12), a      	; change User LED state
+    ret
+
+delay:
+    push    bc
+    ld      de, 4
+dloop2:
+    ld      bc, 0ffffh
+dloop1:
+    ld      a, b
+    or      c
+    dec     bc
+    jp      nz, dloop1
+
+    ld      a, d
+    or      e
+    dec     de
+    jp      nz, dloop2
+
+    pop     bc
+    ret
+endif
+; END LED_BLINK
+
+boote:
+	ld b, 1					; cold boot
+
+	; do hardware initialisation etc.
+	ld hl, 8000h
+	ld (@civec), hl			; CONSOLE	:= CON for input
+	ld (@covec), hl			; CONSOLE	:= CON also for output
+	ld hl, 4000h
+	ld (@aovec), hl			; AUXOUT	:= PTP
+	ld (@lovec), hl			; LST		:= PTP
+	ld hl, 2000h
+	ld (@aivec), hl			; AUXIN		:= PTR
+
+	ld a, 0					; user 0, drive 0 (A:)
+	ld (diskno), a			; if this isn't done, CCP.COM is not found
+
+	jp wboot1
+
+wboot:	
+	ld sp, bstack
+	ld b, 0					; warm boot
+
+wboot1:
+;	initialize low memory jumps
+	ld a, 0c3h				; c3 is a jmp instruction
+	ld (0), a				; for jmp to wboot
+	ld hl, warmpt			; wboot entry point
+	ld (1), hl				; set address field for jmp at 0
+;
+	ld (5), a				; for jmp to bdos
+	ld hl, (@mxtpa)			; get BDOS entry point
+	ld (6), hl				; address field of Jump at 5 to bdos
+
+if DEBUG
+	; print BDOS entry address
+	push bc
+	ld hl, str_newline
+	call puts
+	ld	hl, (@mxtpa)
+	ld a, h
+	call PRINT_HEX
+	ld a, l
+	call PRINT_HEX
+	push hl
+	ld hl, str_newline
+	call puts
+	
+	; print a few bytes 
+	pop hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	
+	ld hl, str_newline
+	call puts
+	pop bc
+endif
+
+	ld a, b
+	or a
+	jp z, ldccp				; warm boot so load CCP
+
+	ld hl, str_version		; else cold boot so print sign-on
+	call puts
+
+ldccp:
+	ld hl, cpm3_driveA		; starting disk image file name = "/CPM3.DSK"
+	ld de, cpm_driveX
+	ld bc, 9				; length of disk image file name + 1
+	ldir					; make a copy of the disk image file name
+
+	; clear fcb
+	ld bc, 35
+	ld hl, dffcb			
+	ld a, 0
+	ld (hl), a
+	ld d, h
+	ld e, l
+	inc de
+	ldir
+
+	; populate FCB
+	ld hl, dffcb 
+	ld a, 1					; drive a:
+	ld (hl), a
+	ld hl, ccpstg			; 'ccp     com'
+	ld de, dffcb+1
+	ld bc, 11				; length of a file name
+	ldir					; build fcb
+
+	ld de, dffcb
+	ld c, open
+	call bdos				; try to open CCP.COM
+
+if DEBUG
+	;push af
+	;call PRINT_HEX
+	;ld hl, str_newline
+	;call puts
+	;pop af
+endif
+
+	cp 0ffh
+	jp z, operr
+
+	;set multi-io to 1
+	ld c, multisec
+	ld de, 1
+	call bdos
+
+	ld de, tpa				; load into tpa
+	push de					; save dma address
+;
+; ccp.com is found and opened
+; read it to tpa
+ldloop:
+	pop de
+	push de
+	ld c, dma
+	call bdos				; set dma for next 128 byte read
+
+	ld de, dffcb
+	ld c, readseq
+	call bdos				; read file data to tpa ram
+	cp 1
+	pop	de					; restore dma address
+	jp z, gocpm				; EOF, enter CCP
+
+	ld hl, 128				; advance dma address 128 bytes
+	add	hl, de
+	push hl
+	jp ldloop				; loop
+;
+;
+gocpm:	
+	jp ccp					; now turn it loose
+	
+operr:	
+	ld hl, opnmsg			; "BIOS can't open CCP.COM"
+	jp errs
+
+errs:	
+	call puts
+
+	halt					; FATAL failed in some way to load CCP.COM
+
+
+
+; BIOS stack space
+	DEFS 	64, 0			; 32 pointers
+bstack:
+
+
+;--------------------------------------------------------
+;
+;	local and null processes
+;
+;--------------------------------------------------------
+conost:	
+	in a, (UALSR)   		; check UART is ready to send.
+    bit 5, a         		; zero flag set to true if bit 5 is 0
+	jr z, conost_nr			; port not ready
+
+	ld a, 0ffh				; ready
+	ret
+
+conost_nr:
+	ld a, 0					; not ready
+	ret
+
+auxist:	
+auxost:	
+	ld	a, true				;the white lies
+	ret
+
+devini:	
+	ret
+
+multio:	
+	;ld a, c
+	;ld (multiocnt), a
+	ret
+
+xmove:	
+selmem:	
+setbnk:	
+	ret						; not using in non-banked BIOS
+
+userf:	
+	ret						; might use this for ROM conrol/routines???
+
+flush:	
+	xor	a					; not implemented
+	ret	
+
+devtbl:	
+	ld hl, chartable
+	ret	
+
+drvtbl:	
+	ld hl, drivetable 
+	ret	
+
+move:	
+	ex de, hl
+	ldir
+	ex de, hl
+	ret	
+
+;--------------------------------------------------------
+;
+;	simple indexed processes
+;
+;--------------------------------------------------------
+
+;console status, return 0ffh if character ready, 00h if not
+const:
+	in a, (UALSR)			; get status from Line Status Register
+	bit 0, a				; zero flag set to true if bit 0 is 0 (bit 0 = Receive Data Ready)
+	jr z, con_empty
+	ld a, 0ffh				; char ready	
+	ret
+con_empty:
+    ld a, 00h				; no char
+	ret
+
+; console character input A
+conin:
+	in a, (UALSR)			; get status from Line Status Register
+	bit 0, a				; zero flag set to true if bit 0 is 0 (bit 0 = Receive Data Ready)
+	jr z, conin				; loop until char ready
+	in a, (UARX)			; Get the incoming char
+							; NOTE Xmodem will not work on CON if no parity is used
+	and 7fh		   		 	; no parity
+	ret
+
+; console character output from C
+conout:	
+	in	a, (UALSR)   		; check UART is ready to send.
+    bit 5, a         		; zero flag set to true if bit 5 is 0
+	jp	z, conout			; loop until port ready
+
+	ld	a, c		    	; get the char
+	and 7fh					; no parity
+	out	(UATX), a			; out to port
+	ret
+
+list:
+	ret
+
+; punch	character from register C
+auxout:
+	in	a, (UALSR)   		; check UART is ready to send.
+    bit 5, a         		; zero flag set to true if bit 5 is 0
+	jp	z, conout			; loop until port ready
+
+	ld	a, c		    	; get the char
+	out	(UATX), a			; out to port
+	ret
+	
+; read character into register A from reader device
+auxin:
+	in a, (UALSR)			; get status from Line Status Register
+	bit 0, a				; zero flag set to true if bit 0 is 0 (bit 0 = Receive Data Ready)
+	jr z, conin				; loop until char ready
+	in a, (UARX)			; Get the incoming char
+							; NOTE Xmodem will not work on CON if no parity is used
+	ret
+	
+listst:
+	ld a, true
+	ret
+
+
+home:
+	ld bc, 0
+
+settrk:
+	ld (track), bc
+if DEBUG
+	ld hl, str_print_track
+	call puts
+	ld a, (track+1)
+	call PRINT_HEX
+	ld a, (track)
+	call PRINT_HEX
+	
+	ld hl, str_print_sector
+	call puts
+	ld a, (sector+1)
+	call PRINT_HEX
+	ld a, (sector)
+	call PRINT_HEX
+	ld hl, str_newline
+	call puts
+endif
+	ret
+
+if DEBUG
+str_print_track:
+	defb	"T: ", 0
+endif
+
+setsec:
+	ld (sector), bc
+if DEBUG
+	ld hl, str_print_track
+	call puts
+	ld a, (track+1)
+	call PRINT_HEX
+	ld a, (track)
+	call PRINT_HEX
+	
+	ld hl, str_print_sector
+	call puts
+	ld a, (sector+1)
+	call PRINT_HEX
+	ld a, (sector)
+	call PRINT_HEX
+	ld hl, str_newline
+	call puts
+endif
+	ret
+
+if DEBUG
+str_print_sector:
+	defb	"   S: ", 0
+endif
+
+setdma:
+	ld (dmaad), bc
+	ret
+	
+
+; read one sector
+read:
+	ld hl, cpm_driveX
+	call open_file			; open selected disks FAT disk image
+	call drive_seek			; calculate disk image file offset
+	cp 0
+	jr nz, read_error
+
+	call read_from_file		; read 128 bytes
+	ret
+
+read_error:
+	ld a, 1
+	ret
+
+;str_sk:
+;	defb "expected drive ", 0
+;str_sk2:
+;	defb ":, got drive ", 0
+;str_sk3:
+;	defb ":", 0
+;str_newline:
+;	defb 13, 10, '$'
+
+
+; write one sector
+write:
+	ld hl, cpm_driveX
+	call open_file			; open selected disks FAT disk image
+	call drive_seek			; calculate disk image file offset
+	cp 0
+	jr nz, write_error
+
+	call write_to_file		; write 128 bytes
+	ret
+
+write_error:
+	ld a, 1
+    ret
+
+
+drive_seek:
+
+	; calculate number of cpm records (128 byte records)
+	; cpmrec = (spt * track) + sector
+	ld bc, (cspt)			; current drive's sectors per track
+	ld de, (track)	
+	call DE_Times_BC		; track * spt (de * bc) returns answer in dehl
+	ld bc, (sector)
+	add hl, bc				; add sector to hl - might need to be a 32bit add
+
+	ld bc, 128
+	ld d, h
+	ld e, l
+	call DE_Times_BC
+	
+_seek:
+	call move_to_file_ptr ; altered to use dehl
+	cp USB_INT_SUCCESS
+	jr nz, _seek_fail
+
+	ld a, 0
+	ret
+
+_seek_fail:
+if DEBUG
+	push af
+	ld hl, str_newline
+	call puts
+	pop af
+	call PRINT_HEX			; print seek status
+	ld hl, str_newline
+	call puts
+
+	ld hl, str_seek_fail
+	call puts
+endif
+	ld a, 1
+	ret
+; end drive_seek
+
+if DEBUG
+str_seek_fail:
+	db "BIOS: Seek failed", 13, 10, 0
+endif
+
+;
+;
+; multiplication function
+; multiply two 16bit registers
+; returns a 32bit sum
+; ref: http://z80-heaven.wikidot.com/math#toc4
+;
+DE_Times_BC:
+;Inputs:
+;     DE and BC are factors
+;Outputs:
+;     A is 0
+;     BC is not changed
+;     DEHL is the product
+;
+    ld hl, 0
+    ld a, 16
+Mul_Loop_1:
+    add hl, hl
+    rl e
+	rl d
+    jr nc, $+6
+    add hl, bc
+    jr nc, $+3
+    inc de
+    dec a
+    jr nz, Mul_Loop_1
+
+    ret
+
+
+; translate the sector given by BC using the translate table given by DE
+sectrn:
+	ld l, c
+	ld h, b
+	ld a, d
+	or a, e
+	ret z					; DE = 0, so no translation, HL = BC (original sector)
+
+	ex de, hl				; HL = translation table
+	add hl, bc				; DE = BC = sector number
+	ld l, (hl)				
+	ld h, 0					; HL = translated sector
+
+	ret			    		; return sector in HL
+
+;--------------------------------------------------------
+;
+;	return HL = DPH address if drive exists, else return 0
+seldsk:	
+	ld	hl, 0000h			; bad drive
+	ld	a, c				; drive request
+	cp	drives 
+	ret	nc					; exit if unused or invalid drive
+
+	ld (diskno), a			; CCP.COM needs this - CP/M 2 progs also reference this
+
+	push bc					; save selected drive
+	ld a, c
+	cp 0
+	jr nz, seldsk_btod		; drive B:, C:, or D: ?
+
+	ld hl, cpm3_driveA		; A: drive uses /CPM3.DSK
+	ld de, cpm_driveX
+	ld bc, 11
+	ldir
+	jr seldsk_got
+
+; not A: drive
+seldsk_btod:
+	ld hl, cpm_driveB
+	ld de, cpm_driveX
+	ld bc, 11
+	ldir					; copy /B.DSK 
+	
+	ld hl, cpm_driveX+1
+	add a, 'A'				; add real disk number to filename (eg. disk 0 = /A.DSK)
+	ld (hl), a				; ammend current disk image filename => eg. /B.DSK
+
+seldsk_got:
+	pop bc					; get selected drive
+	ld	l, c
+	ld	h, 0
+	add	hl, hl				; create index from drive code (16bit pointer)
+	ld	bc, drivetable
+	add	hl, bc				; HL = dph pointer
+
+	ld	c,(hl)
+	inc	hl
+	ld	b,(hl)				; BC -> dph address				
+	ld (cdph), bc			; save dph address
+
+	ld hl, 12
+	add hl, bc				; HL -> dpb pointer
+
+	ld c, (hl)
+	inc hl
+	ld b, (hl)
+	ld (cdpb), bc			; save dpb address
+
+	ld hl, (cdpb)
+	ld c, (hl)
+	inc hl
+	ld b, (hl)
+
+	ld (cspt), bc			; save current drives spt
+
+if DEBUG_DRV
+	call PRINT_DRIVEINFO
+endif
+
+	;ld hl, cpm_driveX
+	;call open_file			; open selected disks FAT disk image
+	;jp z, seldsk_selected
+
+	;ld hl, str_dir_fail3
+	;call puts
+	;ld hl, cpm_driveX
+	;call puts
+	;ld hl, str_newline
+	;call puts
+
+	;ld hl, 0000h			; return error
+	;ret
+
+seldsk_selected:
+	ld hl, (cdph)			; return current drives DPH addess	
+	ret	
+
+;str_dir_fail3: 	
+;	db "BIOS: Fatal Failed to open disk image - ", 0
+
+
+
+;
+; XDPH functions
+fdinit:
+hdinit:
+	ret
+
+fdlogin:
+hdlogin:
+	ret
+
+
+; HL points to null terminated string
+send_data_string:
+    ld a, (hl)
+    cp 0
+    jr z, sd_string_done
+
+    call send_data
+    inc hl
+    jp send_data_string
+
+sd_string_done:
+    call send_data
+    ret
+
+; HL = filename pointer
+open_file:
+    ld a, CH_CMD_SET_FILE_NAME
+    call send_command
+    call send_data_string
+    ld a, CH_CMD_FILE_OPEN
+    call send_command
+    call read_status
+    cp USB_INT_SUCCESS
+    ret
+
+
+;----------------------------------
+; CP/M READ FROM FILE
+; read 128 bytes from the current file into buffer address pointed to in HL
+read_from_file:
+    ld a, CH_CMD_BYTE_READ
+    call send_command
+    ld a, 128               ; Request 128 bytes
+    call send_data
+    ld a, 0
+    call send_data
+    call read_status
+    cp USB_INT_DISK_READ    ; go ahead and read
+    jr z, read_from_file3
+
+    cp USB_INT_SUCCESS      ; we are finished
+    jr z, read_done
+
+    ld a, 1                 ; return error condition
+    ret
+
+read_from_file3:
+    ld a, CH_CMD_RD_USB_DATA0 
+    call send_command       ; how many bytes are available to read?
+    call read_data          ; A tells us
+    
+    cp 128
+	jp nz, rd_size			; sector size is 128 bytes, error if not
+
+	ld hl, (dmaad)
+	ld b, 128
+    ld c, CH_DATA_PORT
+    inir                    ; IO loop - data is written to buffer pointed to in HL
+
+read_done:    
+    ld a, 0
+    ret                     ; return good status
+
+rd_from_cannot:
+    ;ld hl, str_read_fail
+    ;call puts
+    or 1                    ; clear zero flag
+    ret
+
+;str_read_fail:
+;    db "Read fail ", 13, 10, '$'
+
+rd_size:
+;    ld hl, str_rd_size
+;    call puts
+    jp rd_from_cannot
+
+;str_rd_size:
+ ;   db "Expected 128 bytes", 13, 10, '$'
+
+
+;
+; Set the BYTE_LOCATE file position in the currently open file.
+; Value is passed in dehl, hl = low word, de = high word
+move_to_file_ptr:
+if DEBUG_FILEP
+	push hl
+	push de
+endif
+
+    ld a, CH_CMD_BYTE_LOCATE
+    call send_command
+    ld a, l
+    call send_data
+    ld a, h
+    call send_data
+    ld a, e
+    call send_data
+    ld a, d
+    call send_data
+    call read_status		; status in A
+
+if DEBUG_FILEP
+	pop de
+	pop hl
+	push af
+	push hl
+	push de
+	ld hl, str_fp
+	call puts
+	pop de
+	push de
+	ld a, d
+	call PRINT_HEX
+	pop de
+	ld a, e
+	call PRINT_HEX
+	pop hl
+	push hl
+	ld a, h
+	call PRINT_HEX
+	pop hl
+	ld a, l
+	call PRINT_HEX
+	ld hl, str_newline
+	call puts
+	pop af
+endif
+               
+    ret                     ; return status in A
+
+if DEBUG_FILEP
+str_fp:
+	db "File Pointer: ", 0
+endif
+    
+
+
+;----------------------------------
+; CP/M WRITE TO FILE
+; writes 128 bytes from current location pointed to by HL, to the open file
+write_to_file:
+    ld a, CH_CMD_BYTE_WRITE
+    call send_command
+
+    ; Send number of bytes we are about to write, as 16 bit number, low first
+    ld a, 128
+    call send_data
+    ld a, 0
+    call send_data
+    call read_status
+    cp USB_INT_DISK_WRITE
+	jp nz, wr_error
+
+wr_go:
+    ld a, CH_CMD_WR_REQ_DATA
+    call send_command		; returns number of bytes we can send
+    call read_data
+
+	cp 128
+	jr nz, wr_error
+
+wr_cont:
+	ld hl, (dmaad)
+	ld b, 128
+block_loop:
+    ld a, (hl)				; data to write
+	ld d, b					; save B counter
+    call send_data			; write out data block (should be 128 bytes)
+    inc hl
+	ld b, d					; retreive B
+    djnz block_loop
+
+	ld a, CH_CMD_BYTE_WR_GO
+    call send_command
+
+	jp wr_finished
+wr_error:
+	ld a, 1
+	ret
+
+wr_finished:
+    ld a, 0
+    ret
+
+;str_wr_frag:
+;	DEFB 	"BIOS: Write fragmented buffer sent ", 0
+
+
+close_file:
+    ld a, CH_CMD_FILE_CLOSE
+    call send_command
+    ld a, 0                 ; 1 = update FAT file size if necessary
+    call send_data
+    call read_status
+    ret
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+; function putc
+; Print a single ASCII character
+; entry:
+;   C = ASCII character to print
+;
+putc: 
+	ld c, a
+	call conout
+	ret
+; function end
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;     
+; function puts
+; 	Print null terminated ASCII string
+; entry:
+;   HL points to string
+;
+; all registers preserved
+;
+
+puts:  
+	push af
+	push bc
+	push hl
+
+puts1: 
+	ld a, (hl)              ; get character
+	cp 0                    ; test for end of string
+	jp z, puts_end          ; return
+
+	ld c, a
+	call putc
+
+	inc hl 
+	jp puts1                ; repeat
+
+puts_end:
+    pop hl
+	pop bc
+    pop af
+
+    ret
+; function end
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+if DEBUG
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+; function PRINT_HEX
+; print a hexadecimal byte
+;
+; entry:
+;   A byte to print
+; 
+PRINT_HEX:  
+            PUSH    AF
+            RRCA                         
+            RRCA 
+            RRCA 
+            RRCA                        ; get high nibble
+            CALL    PASS1               ; 
+            POP     AF
+PASS1:      AND     0Fh
+            ADD     A,30h
+            CP      3Ah
+            JR      C,NUM               ; A < $3a - 0-9
+            ADD     A,07h               ; else A-F
+NUM:
+            LD      C, A
+            CALL    putc
+
+            RET
+; function end
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+endif
+
+if DEBUG_DRV
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;
+; function PRINT_DRIVEINFO
+; print a hexadecimal byte
+;
+PRINT_DRIVEINFO:
+	push af
+	push bc
+	push de
+	push hl
+
+	; print drive letter
+	ld hl, str_drv
+	call puts
+	ld a, (diskno)
+	add 'A'
+	ld c, a
+	call putc
+	ld c, ':'
+	call putc
+	ld hl, str_newline
+	call puts
+
+	; print dph address
+	ld hl, str_dph
+	call puts
+	ld hl, (cdph)
+	ld a, h
+	call PRINT_HEX
+	ld a, l
+	call PRINT_HEX
+	ld hl, str_newline
+	call puts
+
+	; print dph
+	ld hl, str_dph_hdr
+	call puts
+	ld hl, (cdph)			; XLT
+	ld a, (hl)
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld bc, 9
+	add hl, bc				; workspace 9 bytes
+	push hl
+	ld hl, str_fspaces
+	call puts
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; MF
+	call PRINT_HEX
+	inc hl
+	push hl		
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; DPB
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; CSV
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; ALV
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; DIR buffer
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; DTA buffer
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; HASH
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; BK
+	call PRINT_HEX		
+	ld hl, str_spaces
+	call puts
+	ld hl, str_newline
+	call puts
+	ld hl, str_newline
+	call puts
+
+	; print dpb
+	ld hl, str_dpb_hdr
+	call puts
+	ld hl, (cdpb)
+	ld a, (hl)				; SPT
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; BSH
+	call PRINT_HEX			
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; BLM
+	call PRINT_HEX			
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; EXM
+	call PRINT_HEX			
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; DSM
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; DRM
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; AL0
+	call PRINT_HEX			
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; AL1
+	call PRINT_HEX			
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; CKS
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; OFF
+	call PRINT_HEX			
+	inc hl
+	ld a, (hl)
+	call PRINT_HEX
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; PSH
+	call PRINT_HEX			
+	inc hl
+	push hl
+	ld hl, str_spaces
+	call puts
+	pop hl
+
+	ld a, (hl)				; PHM
+	call PRINT_HEX
+	ld hl, str_newline
+	call puts
+
+	; print track and sector numbers
+	ld hl, str_newline
+	call puts
+	ld hl, str_track
+	call puts
+	ld hl, (track)
+	ld a, h
+	call PRINT_HEX
+	ld a, l
+	call PRINT_HEX
+	ld hl, str_spaces
+	call puts
+	ld hl, str_sector
+	call puts
+	ld hl, (sector)
+	ld a, h
+	call PRINT_HEX
+	ld a, l
+	call PRINT_HEX
+	ld hl, str_newline
+	call puts
+	ld hl, str_newline
+	call puts
+
+	pop hl
+	pop de
+	pop bc
+	pop af
+
+	ret
+
+str_drv:
+	db "Drive ", 0
+str_spaces:
+	db "  ", 0
+str_dph:
+	db "DPH Ptr: ", 0
+str_track:
+	db "Track: ", 0
+str_sector:
+	db "Sector: ", 0
+str_fspaces:
+	db "                  ", 0
+str_dph_hdr:
+	db "XLT   - 0 -               MF  DPB   CSV   ALV   DIR   DTA   HASH  BK", 13, 10, 0
+str_dpb_hdr:
+	db "SPT   BSH BLM EXM DSM   DRM   AL0 AL1 CKS   OFF   PSH PHM", 13, 10, 0
+
+; function end
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+endif
+
+str_newline:
+	db 		13, 10, 0
+str_version: 
+	db 		13, 10, "CP/M 3.1 BIOS Non-Banked, v1.0 November 2021, Steve Bradford"
+	db 		13, 10, "Z80 Playground [8bitStack.co.uk]", 13, 10, 0
+cpm2_driveA:
+	db 		"/A.DSK", 0, 0, 0, 0, 0, 0, 0, 0, 0
+cpm_driveB:
+	db 		"/B.DSK", 0, 0, 0, 0, 0, 0, 0, 0, 0
+cpm3_driveA: 
+	db 		"/CPM3.DSK", 0, 0, 0, 0, 0, 0
+cpm_driveX:  
+	ds 		15, 0
+ccpstg:
+	db		"CCP     COM"
+opnmsg:	
+	DEFB	13, 10, "BIOS: can not open CCP.COM", 13, 10, 0, '$'
+
+; FCB FOR CCP.COM FILE LOADING
+;ccpfcb:
+;	defb	1				; AUTO-SELECT DRIVE A
+;	defb	'CCP     COM'	; FILE NAME AND TYPE
+;	defb	0, 0, 0, 0
+;	defs	16
+;fcb$nr:	
+;	defb	0, 0, 0
+
+chartable:	
+	DEFB	'CRT   '		; device 0
+	DEFB 	chario			; read and write
+	DEFB 	baudnone
+	DEFB 	'PTP   '		; device 1
+	DEFB 	charoutput		; write only
+	DEFB 	baudnone
+	DEFB 	'PTR   '		; device 2
+	DEFB 	charinput		; read only
+	DEFB 	baudnone
+	DEFB 	0				; table terminator
+
+;--------------------------------------------------------
+;
+;	uninitialized storage
+;
+;--------------------------------------------------------	
+
+diskno:	equ 4
+track:	dw	0
+sector:	dw	0
+dmaad:	dw	0
+cdph:	dw  0				; current DPH pointer
+cdpb:	dw  0				; current DPB pointer
+cspt:	dw  0				; current drive's SPT
+
+
+drivetable:	
+		DEFW	dph0
+		DEFW 	dph1
+		DEFW 	dph2
+		DEFW 	dph3
+		DEFW 	0 ;dph4
+		DEFW 	0 ;dph5
+		DEFW 	0 ;dph6
+		DEFW 	0 ;dph7
+		DEFW 	0 ;dph8
+		DEFW 	0 ;dph9
+		DEFW 	0 ;dpha
+		DEFW 	0 ;dphb
+		DEFW 	0 ;dphc
+		DEFW 	0 ;dphd
+		DEFW 	0 ;dphe
+		DEFW 	0 ;dphf
+
+
+;Disk Parameter Header
+;
+;In the following figure, which shows the format of the Disk Parameter
+;Header, B refers to bits.
+;
+;	+---+---+--+---+---+---+------+------+----+-----+
+;	|XLT|-0-|MF|DPB|CSV|ALV|DIRBCB|DTABCB|HASH|HBANK|
+;	+---+---+--+---+---+---+------+------+----+-----+
+;	|16B|72B|8B|16B|16B|16B|  16B |  16B | 16B|  8B |
+;	+---+---+--+---+---+---+------+------+----+-----+
+
+; Extended Disk Parameter Header (XDPH)
+xdph0:
+		DEFW	write
+		DEFW	read
+		DEFW	fdlogin
+		DEFW	fdinit
+		DEFB	0, 0				; relative drive 0
+;fdsd0 dph trans, dpbsd, 0, 31
+dph0:	
+		DEFW	atrans				; XLT
+		DEFB	0,0,0,0,0,0,0,0,0	; -0-
+		DEFB	0					; MF
+		DEFW	dpb0				; DPB
+		DEFW	0					; CSV
+		DEFW	alv0				; ALV
+		DEFW	dirbcb0				; DIRBCB
+		DEFW	0ffffh				; DTABCB
+		DEFW	0ffffh 				; HASH
+		DEFB	0					; HBANK	
+
+
+; Extended Disk Parameter Header (XDPH)
+xdph1:
+		DEFW	write
+		DEFW	read
+		DEFW	fdlogin
+		DEFW	fdinit
+		DEFB	1, 0				; relative drive 1
+;fdsd1 dph trans, dpbsd, 0, 31	
+dph1:	
+		DEFW	atrans				; XLT
+		DEFB	0,0,0,0,0,0,0,0,0	; -0-
+		DEFB	0					; MF
+		DEFW	dpb0				; DPB
+		DEFW	0					; CSV
+		DEFW	alv1				; ALV
+		DEFW	dirbcb0				; DIRBCB
+		DEFW	0ffffh				; DTABCB
+		DEFW	0ffffh 				; HASH
+		DEFB	0					; HBANK	
+
+; Extended Disk Parameter Header (XDPH)
+xdph2:
+		DEFW	write
+		DEFW	read
+		DEFW	hdlogin
+		DEFW	hdinit
+		DEFB	2, 0				; relative drive 2
+dph2:	DEFW	0					; XLT
+		DEFB	0,0,0,0,0,0,0,0,0	; -0-
+		DEFB	0					; MF
+		DEFW	dpb1				; DPB
+		DEFW	0					; CSV
+		DEFW	alv2				; ALV
+		DEFW	dirbcb0				; DIRBCB
+		DEFW	0FFFFh				; DTABCB
+		DEFW	0FFFFh 				; HASH
+		DEFB	0					; HBANK	
+
+; Extended Disk Parameter Header (XDPH)
+xdph3
+		DEFW	write
+		DEFW	read
+		DEFW	hdlogin
+		DEFW	hdinit
+		DEFB	3, 0				; relative drive 3
+dph3:	DEFW	0					; XLT
+		DEFB	0,0,0,0,0,0,0,0,0	; -0-
+		DEFB	0					; MF
+		DEFW	dpb1				; DPB
+		DEFW	0					; CSV
+		DEFW	alv3				; ALV
+		DEFW	dirbcb0				; DIRBCB
+		DEFW	0FFFFh				; DTABCB
+		DEFW	0FFFFh 				; HASH
+		DEFB	0					; HBANK	
+
+;dpbsd dpb 128, 26, 77, 1024, 64, 2
+dpb0:	DEFW	26					; SPT
+		DEFB	3					; BSH
+		DEFB	7					; BLM
+		DEFB	0					; EXM
+		DEFW	243					; DSM
+		DEFW	63					; DRM
+		DEFB	0c0h				; AL0
+		DEFB	0					; AL1
+		DEFW	8000h				; CKS
+		DEFW	2					; OFF
+		DEFB	0					; PSH
+		DEFB	0					; PHM
+		
+dpb1:	DEFW	64					; SPT
+		DEFB	5					; BSH
+		DEFB	31					; BLM
+		DEFB	1					; EXM
+		DEFW	2047				; DSM
+		DEFW	1023				; DRM
+		DEFB	0ffh				; AL0
+		DEFB	0					; AL1
+		DEFW	8000h				; CKS
+		DEFW	0					; OFF
+		DEFB	0					; PSH
+		DEFB	0					; PHM
+
+;trans skew 26,6,0
+atrans: 
+		DEFM	 0,  6, 12, 18		; sectors  1,  2,  3,  4
+		DEFM	24,  4, 10, 16		; sectors  5,  6,  7,  8
+		DEFM	22,  2,  8, 14		; sectors  9, 10, 11, 12
+		DEFM	20,  1,  7, 13		; sectors 13, 14, 15, 16
+		DEFM	19, 25,  5, 11		; sectors 17, 18, 19, 20
+		DEFM	17, 23,  3,  9		; sectors 21, 22, 23, 24
+		DEFM	15, 21				; sectors 25, 26
+
+dirbcb:
+dirbcb0:	 						; shared buffer control block
+		DEFB	0					; drive
+		DEFB	0, 0, 0
+		DEFB	0
+		DEFB	0
+		DEFW	0					; track
+		DEFW	0					; sector
+		DEFW	dbuff0				; buffer address
+		DEFB	0					; bank
+		DEFW	0					; link
+
+;dirbcb1:	 						; shared buffer control block
+;		DEFB	0					; drive
+;		DEFB	0, 0, 0
+;		DEFB	0
+;		DEFB	0
+;		DEFW	0					; track
+;		DEFW	0					; sector
+;		DEFW	dbuff1				; buffer address
+;		DEFB	0					; bank
+;		DEFW	0					; link
+
+;dirbcb2:	 						; shared buffer control block
+;		DEFB	0					; drive
+;		DEFB	0, 0, 0
+;		DEFB	0
+;		DEFB	0
+;		DEFW	0					; track
+;		DEFW	0					; sector
+;		DEFW	dbuff2				; buffer address
+;		DEFB	0					; bank
+;		DEFW	0					; link
+
+;dirbcb3:	 						; shared buffer control block
+;		DEFB	0					; drive
+;		DEFB	0, 0, 0
+;		DEFB	0
+;		DEFB	0
+;		DEFW	0					; track
+;		DEFW	0					; sector
+;		DEFW	dbuff3				; buffer address
+;		DEFB	0					; bank
+;		DEFW	0					; link
+
+dbuff0:	DEFS	128					; directory buffer
+;dbuff1:	DEFS	128					; directory buffer
+;dbuff2:	DEFS	128				; directory buffer
+;dbuff3:	DEFS	128				; directory buffer
+alv0:	DEFS	31					; (DSM/8) + 1 = (243/8)+1
+alv1:	DEFS	31
+									; using single bit allocation in a non-banked system
+									; if banked then must use 2bit allocation
+alv2:	DEFS	256					; (DSM/8) + 1 = (2047/8)+1
+alv3:	DEFS	256
+
+		END	
+;--------------------------------------------------------
+;cp/m is a registered trademark of digital research, inc.
+;you already knew that, but they wanted us to remind you.
+;--------------------------------------------------------

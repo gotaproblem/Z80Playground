@@ -1,0 +1,292 @@
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/10/2021                                           *
+; *                                                      *
+; * CH376S Module Driver                                 *
+; *                                                      *
+; * Filename:                                            *
+; * ch376s.z80                                           *
+; *                                                      *
+; * History                                              *
+; * v1.0   October     2021	Initial release              *
+; *                                                      *
+; ********************************************************
+
+; Build Options
+CPU_4MHZ    		DEFL    0					; select CPU clock speed
+CPU_10MHZ   		DEFL    1					; one or the other only
+DEBUG       		DEFL    0       			; set to 1 for DEBUG code
+
+
+;--- CH376 port to Z80 Playground ports mapping
+CH_DATA_PORT 		equ 	10h
+CH_COMMAND_PORT 	equ 	11h  
+
+
+;--- Commands
+CH_CMD_RESET_ALL 	equ 	5
+CH_CMD_CHECK_EXIST 	equ 	6
+CH_CMD_SET_RETRY 	equ 	0Bh
+CH_CMD_DELAY_100US 	equ 	0Fh
+CH_CMD_SET_USB_ADDR equ 	13h
+CH_CMD_SET_USB_MODE equ 	15h
+CH_CMD_TEST_CONNECT equ 	16h
+CH_CMD_ABORT_NAK 	equ 	17h
+CH_CMD_GET_STATUS 	equ 	22h
+CH_CMD_RD_USB_DATA0 equ 	27h
+CH_CMD_WR_HOST_DATA equ 	2Ch
+CH_CMD_WR_REQ_DATA 	equ 	2Dh
+CH_CMD_SET_FILE_NAME equ 	2fh
+CH_CMD_DISK_CONNECT equ 	30h
+CH_CMD_DISK_MOUNT 	equ 	31h
+CH_CMD_FILE_OPEN 	equ 	32h
+CH_CMD_FILE_CREATE 	equ 	34h
+CH_CMD_FILE_ERASE 	equ 	35h
+CH_CMD_FILE_CLOSE 	equ 	36h
+CH_CMD_BYTE_LOCATE 	equ 	39h
+CH_CMD_BYTE_READ 	equ 	3ah
+CH_CMD_BYTE_RD_GO 	equ 	3bh
+CH_CMD_BYTE_WRITE 	equ 	3ch
+CH_CMD_BYTE_WR_GO 	equ 	3dh
+CH_CMD_DISK_CAPACITY equ 	3eh
+CH_CMD_DISK_QUERY 	equ 	3fh
+
+
+;--- Status codes
+CH_ST_INT_SUCCESS 	equ 	14h
+CH_ST_INT_CONNECT 	equ 	15h
+CH_ST_INT_DISCONNECT equ 	16h
+CH_ST_INT_BUF_OVER 	equ 	17h
+CH_ST_RET_SUCCESS 	equ 	51h
+CH_ST_RET_ABORT 	equ 	5Fh
+
+
+eos					equ		00h					; End of string
+cr					equ		0dh
+lf					equ		0ah
+USB_INT_CONNECT 	equ 	15h
+
+; ----------------------------------------------------------------
+;
+;	external references
+;
+; ----------------------------------------------------------------
+    extrn puts
+
+    public ch376s_init, read_data, read_status
+    public send_data, send_command
+
+
+; ----------------------------------------------------------------
+; initialise CH376S hardware and check operational
+;
+; Output: Carry = 0 if hardware is operational, 1 if it's not
+;
+ch376s_init:
+    ld a, CH_CMD_RESET_ALL
+    call send_command       ; reset CH376S hardware
+    ld bc, 3500
+    call hw_pause           ; wait 35ms for hardware to settle
+
+    ld a, CH_CMD_CHECK_EXIST
+    call send_command
+    ld a, 123               ; send an arbitrary number
+    call send_data
+    call read_data
+    cp 255-123              ; The result is 255 minus what we sent in
+    jp nz, ch367s_check_failed
+
+    ld a, CH_CMD_SET_USB_MODE
+    call send_command
+    ld a, 6
+    call send_data
+    call read_status
+    cp USB_INT_CONNECT
+    jp nz, ch376s_mode_failed
+
+    ld a, CH_CMD_DISK_CONNECT
+    call send_command
+    call read_status
+    jp nz, ch376s_connect_failed
+
+    ld a, CH_CMD_DISK_MOUNT
+    call send_command
+    call read_status
+    jp nz, ch376s_mount_failed
+
+    or a                    ; resets carry flag
+    ret
+
+ch376s_mount_failed:
+    ld hl, str_mount_failed
+    call puts
+    scf                     
+    ret
+
+ch376s_connect_failed:
+    ld hl, str_connect_failed
+    call puts
+    scf
+    ret
+    
+ch367s_check_failed:
+    ld hl, str_check_failed
+    call puts
+    scf
+    ret
+
+ch376s_mode_failed:
+    ld hl, str_mode_failed
+    call puts
+    scf
+    ret
+
+str_mode_failed:
+    db "BIOS: FATAL [ERROR: No USB Disk?]", cr, lf, eos
+str_check_failed:
+    db "BIOS: FATAL [CH376S MODULE NOT FOUND]", cr, lf, eos
+str_connect_failed:
+    db "BIOS: FATAL [ERROR connecting to USB Disk]", cr, lf, eos
+str_mount_failed:
+    db "BIOS: FATAL [ERROR mounting USB Disk]", cr, lf, eos
+
+;-----------------------------------------------------------------
+
+
+;----------------------------------------------------------------
+; send command to CH376S
+;
+; on entry BC = pause value in 0.1ms increments
+;
+; BC, A destroyed
+send_command:
+    out (CH_COMMAND_PORT), a
+    call wait
+    ret
+;-----------------------------------------------------------------
+
+
+;----------------------------------------------------------------
+; read data from CH376S
+;
+; on entry -
+;
+; returns data byte in A
+read_data:
+    in a, (CH_DATA_PORT)
+    ret
+;-----------------------------------------------------------------
+
+
+;----------------------------------------------------------------
+; read status from CH376S
+;
+; on entry -
+;
+; returns data byte in A
+read_status:
+    ld a, CH_CMD_GET_STATUS
+    call send_command
+    call read_data
+    ret
+;-----------------------------------------------------------------
+
+
+; ----------------------------------------------------------------
+; send data in A
+;
+; Output:
+;
+send_data:
+    out (CH_DATA_PORT), a
+    call wait
+    ret
+;-----------------------------------------------------------------
+
+
+; ----------------------------------------------------------------
+; read command in A
+;
+; Output:
+;
+read_command:
+    in a, (CH_COMMAND_PORT)
+    ret
+;-----------------------------------------------------------------
+
+
+;----------------------------------------------------------------
+; pause in 0.1ms increments
+;
+; on entry BC = pause value in 0.01ms increments
+;
+; BC, A destroyed
+hw_pause:
+if CPU_10MHZ
+    ld a, 2                 ; 10us
+else
+    ld a, 8
+endif
+_hwloop:                    ; 50 ticks
+    nop
+    nop                     
+    dec a                   
+    jr nz, _hwloop 
+    dec bc
+    ld a, b
+    or c
+    jr nz, hw_pause
+    
+    ret
+;-----------------------------------------------------------------
+
+
+;----------------------------------------------------------------
+; wait for CH376S chip to signal ready
+;
+; on entry -
+;
+; BC, A destroyed
+wait:
+    ld bc, 50000            ; retry max 500ms
+wait1:
+    push bc
+    call read_command
+    and 10h ;%00010000      ; bit 4 busy flag
+    jp nz, wait2
+
+    and 20h ;%00100000      ; bit 5 fault flag
+    jp nz, ch376_fault
+
+    pop bc
+    ret
+
+wait2:
+    ld bc, 1
+    call hw_pause           ; wait 10us
+    pop bc
+    dec bc
+    ld a, b
+    or c
+    jr nz, wait1
+
+    call wait               ; try again
+    ret
+
+ch376_fault:
+    push hl
+    ld hl, str_faulted
+    call puts
+    pop hl
+    pop bc					; sync stack
+    ret
+
+str_faulted: 
+	DEFB	"BIOS: FATAL [CH376S FAULTED]", cr, lf, eos
+;-----------------------------------------------------------------
+
+
+
+        END

@@ -1,0 +1,16 @@
+; Z80 Playground
+; Steve Bradford Nov 2021
+;
+; CP/M 3 boot loader build
+;
+; cpmldr.z80 BDOS source
+; ldrbios.z80 minimalist BIOS source
+; ch376s.z80 CH376S Module driver source
+;
+d:
+z80asm cpmldr
+z80asm ch376s
+z80asm ldrbios
+link cpmldr[l100]=cpmldr,ldrbios,ch376s
+era cpmldr.sym
+

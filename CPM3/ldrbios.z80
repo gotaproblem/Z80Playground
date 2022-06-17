@@ -1,0 +1,683 @@
+; ********************************************************
+; *                                                      *
+; * Z80 Home Build Development                           *
+; * Steve Bradford                                       *
+; * 01/11/2021                                           *
+; *                                                      *
+; * CP/M Loader BIOS                                     *
+; * Minimal BIOS to load CP/M 3 proper                   *
+; *                                                      *
+; * Filename:                                            *
+; * ldrbios.z80                                          *
+; *                                                      *
+; * History                                              *
+; * v1.0   November    2021	Initial release              *
+; *                                                      *
+; ********************************************************
+
+
+; Build Options
+CPU_4MHZ    		DEFL    0					; select CPU clock speed
+CPU_10MHZ   		DEFL    1					; one or the other only
+DEBUG       		DEFL    0       			; set to 1 for DEBUG code
+DEBUG_LED			DEFL	0					; use LED for diags
+
+
+
+true				equ		-1					; DEFINE LOGICAL VALUES:
+false				equ		not true
+bell				equ		07h
+eos					equ		00h					; End of string
+cr					equ		0dh
+lf					equ		0ah
+
+
+;
+; 16C550 Dual UART Registers
+;
+; General Register Set
+; only available when LCR is set to $00 (bit 7 = 0)
+UIER       			EQU     1               	; Interrupt Enable Register friendly name
+UISR				EQU		2					; Interrupt Status Register friendly name
+UFCR       			EQU     2               	; FIFO Control Register friendly name
+ULCR       			EQU     3               	; Line Control Register friendly name
+UMCR       			EQU     4               	; Modem Control Register friendly name
+ULSR       			EQU     5               	; Line Status Register friendly name
+UMSR        		EQU     6               	; Modem Status Register friendly name
+USPR       			EQU     7              		; Scratchpad Register friendly name
+
+; Baud Rate Register Set
+; only available when LCR is set to $80 (bit 7 = 1)
+UDLL       			EQU     0                   ; LSB of Divisor Latch (rw)
+UDLM       			EQU     1                   ; MSB of Divisor Latch (rw)
+
+; Enhanced Register Set
+; only accessible when LCR is set to $bf
+UFR2      			EQU     2                   ; Enhanced Feature register (rw)
+UFR4       			EQU     4                   ; XON1 word (rw)
+UFR5       			EQU     5                   ; XON2 word (rw)
+UFR6       			EQU     6                   ; XOFF1 word (rw)
+UFR7       			EQU     7                   ; XOFF2 word (rw)
+
+
+; UART A IO Port Addres
+UARTA      			EQU     8                	; mapped to IO Port 
+
+
+; UARTA Register Address offsets
+UALSR      			EQU     UARTA+ULSR
+UAMCR				EQU		UARTA+UMCR
+UAMSR				EQU		UARTA+UMSR
+UAFCR				EQU		UARTA+UFCR
+UASPR      			EQU     UARTA+USPR
+UADLL      			EQU     UARTA+UDLL
+UADLM      			EQU     UARTA+UDLM
+UATX       			EQU     UARTA+0
+UARX       			EQU     UARTA+0
+
+
+CH_DATA_PORT 		equ 	10h
+CH_CMD_RD_USB_DATA0 equ 	27h
+CH_CMD_WR_HOST_DATA equ 	2Ch
+CH_CMD_WR_REQ_DATA 	equ 	2Dh
+CH_CMD_SET_FILE_NAME equ 	2fh
+CH_CMD_DISK_CONNECT equ 	30h
+CH_CMD_DISK_MOUNT 	equ 	31h
+CH_CMD_FILE_OPEN 	equ 	32h
+CH_CMD_FILE_CREATE 	equ 	34h
+CH_CMD_FILE_ERASE 	equ 	35h
+CH_CMD_FILE_CLOSE 	equ 	36h
+CH_CMD_BYTE_LOCATE 	equ 	39h
+CH_CMD_BYTE_READ 	equ 	3ah
+CH_CMD_BYTE_RD_GO 	equ 	3bh
+
+
+
+USB_INT_SUCCESS		equ 	14h
+USB_INT_CONNECT 	equ 	15h
+USB_INT_DISK_READ 	equ 	1Dh
+USB_INT_DISK_WRITE 	equ 	1Eh
+USB_INT_DISK_ERR 	equ 	1Fh
+
+; ----------------------------------------------------------------
+;
+;	external references
+;
+; ----------------------------------------------------------------
+	extrn ch376s_init, read_data, read_status
+	extrn send_command, send_data
+
+if DEBUG_LED
+	public ledflash
+endif
+	public puts
+
+
+;--------------------------------------------------------------------------
+;	                    CODE BEGINS HERE:
+;--------------------------------------------------------------------------	
+
+	jp	boot				; <----- INITIAL ENTRY ON COLD START
+	jp	wboot				; REENTRY ON PROGRAM EXIT, WARM START
+	jp	const				; RETURN CONSOLE INPUT STATUS
+	jp	conin				; RETURN CONSOLE INPUT CHARACTER
+	jp	conout				; <------------ SEND CONSOLE OUTPUT CHARACTER
+	jp	list				; SEND LIST OUTPUT CHARACTER
+	jp	auxout				; SEND AUXILLIARY OUTPUT CHARACTER
+	jp	auxin				; RETURN AUXILLIARY INPUT CHARACTER
+	jp	home				; SET DISKS TO LOGICAL HOME
+	jp	seldsk				; SELECT DISK DRIVE RETURN DISK PARAMETER INFO
+	jp	settrk				; SET DISK TRACK
+	jp	setsec				; SET DISK SECTOR
+	jp	setdma				; SET DISK I/O MEMORY ADDRESS
+	jp	read				; <----------- READ PHYSICAL BLOCK(S)
+	jp	write				; WRITE PHYSICAL BLOCK(S)
+	jp	listst				; RETURN LIST DEVICE STATUS
+	jp	sectrn				; TRANSLATE LOGICAL TO PHYSICAL SECTOR
+	jp	conost				; RETURN CONSOLE OUTPUT STATUS
+	jp	auxist				; RETURN AUXILLIARY INPUT STATUS
+	jp	auxost				; RETURN AUXILLIARY OUTPUT STATUS
+	jp	devtbl				; RETURN ADDRESS OF DEVICE DEFINITION TABLE
+	jp	?cinit				; CHANGE BAUD RATE OF DEVICE
+	jp	getdrv				; RETURN ADDRESS OF DISK DRIVE TABLE
+	jp	multio				; SET MULTIPLE RECORD COUNT FOR DISK I/O
+	jp	flush				; FLUSH BIOS MAINTAINED DISK CACHING
+	jp	?move				; BLOCK MOVE MEMORY TO MEMORY
+	jp	?time				; SIGNAL TIME AND DATE OPERATION
+	jp	bnksel				; SEL BANK FOR CODE EXECUTION AND DEFAULT DMA
+	jp	setbnk				; SELECT DIFFERENT BANK FOR DISK I/O DMA OPS.
+	jp	?xmove				; SET SOURCE AND DEST. BANKS FOR ONE OPERATION
+	jp	0					; RESERVED FOR FUTURE EXPANSION
+	jp	0					;    
+	jp	0					;     
+
+
+; initialise hardware
+; initialise page 0
+; print signon message
+; load CCP
+boot:
+if DEBUG_LED
+	ld b, 1
+	call ledflash
+endif
+
+	ld hl, ldr_signon		; Print sign-on message
+	call puts
+
+	ld a, 0
+	ld (4), a
+
+	ret
+
+wboot:	
+	ret						; WARM BOOT IS NOT USED IN LOADER BIOS
+
+const:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+listst:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+auxist:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+auxost:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+flush:	
+	xor	a					; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+	ret						; RETURN A FALSE STATUS
+
+list:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+auxout:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+devtbl:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+?cinit:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+multio:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+?time:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+bnksel:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+setbnk:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+?xmove:	
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+conin:	
+	ld	a,'Z'-40h			; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+	ret
+
+auxin:	
+	ld	a,'Z'-40h			; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+	ret
+
+; Write Console Character out. 
+; Output char is in C
+conout:		
+	in	a, (UALSR)   		; check UART is ready to send.
+    bit 5, a         		; zero flag set to true if bit 5 is 0
+	jp	z, conout			; loop until port ready
+
+	ld	a, c		    	; get the char
+	;and 7fh					; no parity
+	out	(UATX), a			; out to port
+	ret
+
+; Return Output Status of Console. 
+; Return A=00H if not ready, A=0FFH if
+conost:	
+	in a, (UALSR)   		; check UART is ready to send.
+    bit 5, a         		; zero flag set to true if bit 5 is 0
+	jr z, conost_nr			; port not ready
+
+	ld a, 0ffh				; ready
+	ret
+
+conost_nr:
+	ld a, 0					; not ready
+	ret
+
+?move:	
+	ret
+
+seldsk:	
+	ld hl, dph0				; return current drives DPH addess	
+	ret	
+
+home:	
+	ld bc, 0				; HOME SELECTED DRIVE -- TREAT AS SETTRK(0):
+
+settrk:	
+	ld (track), bc			; ROUTINE SETS TRACK TO ACCESS ON NEXT READ
+	ret
+	
+setsec:	
+	ld (sector), bc			; ROUTINE SETS SECTOR TO ACCESS ON NEXT READ
+	ret
+
+setdma:	
+	ld (dma), bc			; ROUTINE SETS DISK MEMORY ADDRESS FOR READ
+	ret
+
+; translate the sector given by bc using the
+; translate table given by de
+sectrn:	
+	ex de, hl				; hl = trans table address
+	add	hl, bc				; hl = trans (sector) address
+	ld l, (hl)				; l = trans (sector)
+	ld h, 0					; hl = trans (sector)	
+	ret			    		; return hl = translated sector number
+
+getdrv:	
+	ld hl, dtbl				; RETURN ADDRESS OF DISK DRIVE TABLE:
+	ret
+
+fdlogin:
+	ret
+
+fdinit:
+	ret						; ROUTINE HAS NO FUNCTION IN LOADER BIOS:
+
+write:	
+	xor	a					; RETURN GOOD RESULT CODE
+	ret
+
+;
+; Return A=00H if no Error, A=01H if Non-recov Err
+read:
+	call drive_seek			; calculate disk image file offset
+	cp 0
+	jr nz, read_error
+
+	call read_from_file		; read 128 bytes
+
+	ret
+
+read_error:
+	ld a, 1
+	ret
+
+
+
+
+;=============================================================================
+;                          Z80 PLAYGROUND SUPPORT ROUTINES
+;============================================================================= 
+
+; HL = string pointer
+; destroys, A, C, HL
+puts:	
+	ld a, (hl)				; A = current char to print
+	cp	eos					; End of string reached?
+	ret	z					; Yes, return
+
+	ld c, a
+	call conout				; send character
+	inc	hl					; point to next character
+	jr puts	
+
+str_newline:
+	defb	cr, lf, eos
+
+; calculate number of cpm records (128 byte records)
+; cpmrec = (spt * track) + sector
+drive_seek:
+	ld bc, 26				; current drive's sectors per track (always A: for LDRBIOS)
+	ld de, (track)	
+	call DE_Times_BC		; track * spt (de * bc) returns answer in dehl
+	ld bc, (sector)
+	add hl, bc				; add sector to hl - might need to be a 32bit add
+
+	; DEHL = (spt * track) + sector
+	; DEHL is number of cpm records (128 bytes each)
+	; seek offset needs to be in bytes, so multiply by 128
+
+	; use DE to shift in to
+	; rotate left 7 (multiply by 128)
+	; DE = high 16bits, HL = low 16bits
+	ld d, 0
+	ld e, h					; copy H to E
+	srl e					; shift right once
+
+	ld a, h
+	rrc a
+	and 80h
+	ld b, a
+	ld a, l
+	srl a
+	or b
+	ld b, a
+
+	ld a, l
+	rrc a
+	and 80h
+	ld l, a
+	ld h, b
+	
+; now seek to the files byte offset
+_seek:
+	call move_to_file_ptr 	; altered to use dehl
+	cp USB_INT_SUCCESS
+	jr nz, _seek_fail
+
+	ld a, 0
+	ret
+
+_seek_fail:
+	ld a, 1
+	ret
+; end drive_seek
+
+
+
+; multiplication function
+; multiply two 16bit registers
+; returns a 32bit sum
+; ref: http://z80-heaven.wikidot.com/math#toc4
+;
+DE_Times_BC:
+;Inputs:
+;     DE and BC are factors
+;Outputs:
+;     A is 0
+;     BC is not changed
+;     DEHL is the product
+;
+    ld hl, 0
+    ld a, 16
+Mul_Loop_1:
+    add hl, hl
+    rl e
+	rl d
+    jr nc, $+6
+    add hl, bc
+    jr nc, $+3
+    inc de
+    dec a
+    jr nz, Mul_Loop_1
+
+    ret
+
+
+
+
+; HL = filename pointer
+open_file:
+    ld a, CH_CMD_SET_FILE_NAME
+    call send_command
+    call send_data_string
+    ld a, CH_CMD_FILE_OPEN
+    call send_command
+    call read_status
+    cp USB_INT_SUCCESS
+    ret
+
+; HL points to null terminated string
+send_data_string:
+    ld a, (hl)
+    cp 0
+    jr z, sd_string_done
+
+    call send_data
+    inc hl
+    jp send_data_string
+
+sd_string_done:
+    call send_data
+    ret
+
+
+
+;----------------------------------
+; CP/M READ FROM FILE
+; read 128 bytes from the current file into buffer address pointed to in HL
+read_from_file:
+    ld a, CH_CMD_BYTE_READ
+    call send_command
+    ld a, 128               ; Request 128 bytes
+    call send_data
+    ld a, 0
+    call send_data
+    call read_status
+    cp USB_INT_DISK_READ    ; This means "go ahead and read"
+    jr z, read_from_file3
+
+    cp USB_INT_SUCCESS      ; this means we are finished
+    jr z, read_done
+
+    ld a, 1                 ; return error condition
+    ret
+
+read_from_file3:
+    ld a, CH_CMD_RD_USB_DATA0 
+    call send_command       ; how many bytes are available to read?
+    call read_data          ; A tells us
+    
+                            ; quickest way to get the data
+	ld hl, (dma)
+    ld b, a
+    ld c, CH_DATA_PORT
+    inir                    ; IO loop - data is written to buffer pointed to in HL
+
+    ld a, CH_CMD_BYTE_RD_GO
+    call send_command
+    call read_status
+
+	; TODO SXB check read status???
+	;cp USB_INT_SUCCESS
+	;jr z, read_done
+
+	;ld a, 1					; error
+	;ret
+
+read_done:    
+    ld a, 0
+    ret                     ; return good status
+
+
+
+;
+; Set the BYTE_LOCATE file position in the currently open file.
+; Value is passed in dehl, hl = low word, de = high word
+move_to_file_ptr:
+    ld a, CH_CMD_BYTE_LOCATE
+    call send_command
+    ld a, l
+    call send_data
+    ld a, h
+    call send_data
+    ld a, e
+    call send_data
+    ld a, d
+    call send_data
+    call read_status		; status in A
+               
+    ret                     ; return fail
+
+    
+
+
+
+
+cpm3_driveA: 
+	defb	"/CPM3.DSK", 0, 0, 0, 0, 0, 0
+ldr_signon:
+	;defb	cr, lf, "CP/M 3 CPMLDR BIOS, v1.0 November 2021, Steve Bradford"
+	;defb	cr, lf, "Z80 Playground [8bitStack.co.uk]", cr, lf, eos
+	defb	cr, lf, "Loading CP/M 3.1 ...", cr, lf, eos
+track:	
+	defs	2				; NEXT TRACK TO READ OR WRITE
+sector:	
+	defs	2				; SECTOR
+dma:	
+	defs	2				; NEXT DMA ADDRESS
+
+;--------------------------------------------------------
+; Hand coded drive tables etc.
+; Copied from Z80 Playground CP/M 3 BIOS (PBIOS3.Z80)
+;--------------------------------------------------------
+	
+; DISK DRIVE TABLE
+dtbl:	
+	defw	dph0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+
+; DISK PARAMETER HEADER
+	defw	write			; WRITE ROUTINE
+	defw	read			; READ ROUTINE
+	defw	fdlogin			; LOGIN PROCEDURE
+	defw	fdinit			; DRIVE INITIALIZATION ROUTINE
+	defb	0				; RELATIVE DRIVE 0 ON THIS CONTROLLER
+	defb	0				; MEDIA TYPE ALWAYS KNOWN FOR HARD DISK
+
+dph0:	
+	defw	atrans0			; TRANSLATION VECTOR
+	defb	0, 0, 0, 0, 0, 0, 0, 0, 0
+	defb	0				; MEDIA FLAG
+	defw	dpb				; ADDRESS OF DISK PARAMETER BLOCK
+	defw	0				; CHECKSUM VECTOR
+	defw	alv				; ALLOCATION VECTOR
+	defw	dirbcb			; DIRECTORY BUFFER CONTROL BLOCK
+	defw	0ffffh			; DATA BUFFER CONTROL BLOCK
+	defw	0ffffh			; NO HASHING
+	defb	0				; HASH BANK
+
+; HARD DISK PARAMETER BLOCK:
+				; Bytes per sector, num sec, num trk, block size, dir entries, res trk, HD 
+	
+;fddpb:	dpb     128,26,77,1024,64,2,0000h
+
+; DISK PARAMETER BLOCK	
+dpb:	
+	DEFW	26				; SPT
+	DEFB	3				; BSH
+	DEFB	7				; BLM
+	DEFB	0				; EXM
+	DEFW	243				; DSM
+	DEFW	63				; DRM
+	DEFB	192				; AL0
+	DEFB	0				; AL1
+	DEFW	8000h			; CKS
+	DEFW	2				; OFF
+	DEFB	0				; PSH
+	DEFB	0				; PHM
+
+; DIRECTORY BUFFER CONTROL BLOCK
+dirbcb:
+	defb	0ffh			; DRIVE 0
+	defb	0, 0, 0
+	defb	0
+	defb	0
+	defw	0
+	defw	0
+	defw	dirbuf			; POINTER TO DIRECTORY BUFFER
+	defb	0
+	defw	0
+
+; DATA BUFFER CONTROL BLOCK
+;databcb:
+;	defb	0ffh			; DRIVE 0
+;	defb	0, 0, 0
+;	defb	0
+;	defb	0
+;	defw	0
+;	defw	0
+;	defw	databuf			; POINTER TO DATA BUFFER
+;	defb	0
+;	defw	0
+
+
+; DIRECTORY BUFFER
+dirbuf:	
+	defs	128				; 1 SECTOR
+
+; DATA BUFFER
+;databuf:
+;	defs	128				; 1 SECTOR
+
+; DRIVE ALLOCATION VECTOR
+alv:
+	defs	31				; SPACE FOR SINGLE BIT ALLOCATION VECTORS
+
+atrans0: 
+	DEFM	 0,  6, 12, 18	; sectors  1,  2,  3,  4
+	DEFM	24,  4, 10, 16	; sectors  5,  6,  7,  8
+	DEFM	22,  2,  8, 14	; sectors  9, 10, 11, 12
+	DEFM	20,  1,  7, 13	; sectors 13, 14, 15, 16
+	DEFM	19, 25,  5, 11	; sectors 17, 18, 19, 20
+	DEFM	17, 23,  3,  9	; sectors 21, 22, 23, 24
+	DEFM	15, 21			; sectors 25, 26
+
+
+if DEBUG_LED
+ULED1 equ 12
+; call with B = number of flashes
+ledflash:
+	in      a, (ULED1)
+    and     0feh            ; User LED is bit 0
+    out     (ULED1), a      ; clear user LED if on
+
+    ;ld      b, 5            ; number of flashes
+loop:
+    call    delay
+    call    toggle          ; LED on
+
+    call    delay
+    call    toggle          ; LED off
+
+    ld      a, b
+    dec     b
+    jp      nz, loop        ; loop until 0
+
+    ;jp      0               ; CP/M warm boot
+	ret
+
+
+toggle:
+    in      a, (ULED1)      ; read port
+	bit     0, a            ; test current state of User LED
+	jr      z, toggle_on    ; User LED is off
+
+	and     0feh            ; mask bits 7 - 1, reset bit 0 = turn User LED off
+	jr      toggle_end
+
+toggle_on:
+	or      1               ; set bit 0 = turn User LED on
+toggle_end:
+	out     (ULED1), a      ; change User LED state
+    ret
+
+
+delay:
+    push    bc
+    ld      de, 2
+dloop2:
+    ld      bc, 0ffffh
+dloop1:
+    ld      a, b
+    or      c
+    dec     bc
+    jp      nz, dloop1
+
+    ld      a, d
+    or      e
+    dec     de
+    jp      nz, dloop2
+
+    pop     bc
+    ret
+endif
+
+	END
